@@ -1,45 +1,42 @@
+// Local development server: http://localhost:8091
+// Reads OPENAI_API_KEY from .env (never committed). Data lives in .data/.
 import { createServer } from 'node:http';
-import { readdir, readFile } from 'node:fs/promises';
-import { interpretReply } from './openai.mjs';
+import { handleApi } from './lib/api.mjs';
+import { serveStatic, securityHeaders } from './lib/static.mjs';
+import { fileStore } from './lib/store.mjs';
 
+try { process.loadEnvFile(new URL('./.env', import.meta.url)); } catch {}
 const key = process.env.OPENAI_API_KEY;
-const root = new URL('./dist/', import.meta.url);
-const files = await readdir(root, {recursive:true});
-const assetNames = files.filter(name => /\.(html|css|mjs|txt|m4a)$/u.test(name));
-const assets = new Map(assetNames.map(name => ['/' + name, new URL(name, root)]));
-assets.set('/', assets.get('/index.html'));
-const mime = {html:'text/html; charset=utf-8',css:'text/css; charset=utf-8',mjs:'text/javascript; charset=utf-8',txt:'text/plain; charset=utf-8',m4a:'audio/mp4'};
-const phases = new Set(['explaining','meal','dose','pack']);
-createServer(async (request,response) => {
+const store = fileStore(new URL('./.data/', import.meta.url));
+const port = Number(process.env.PORT) || 8091;
+
+createServer(async (request, response) => {
   try {
-    const path = new URL(request.url,'http://localhost').pathname;
-    if (path === '/api/status' && request.method === 'GET') {
-      return response.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({openai:Boolean(key)}));
-    }
-    if (path === '/api/interpret' && request.method === 'POST') {
-      if (!['http://localhost:8091','http://127.0.0.1:8091'].includes(request.headers.origin)) return response.writeHead(403).end();
-      if (!key) return response.writeHead(503).end();
+    const url = new URL(request.url, 'http://localhost');
+    let result;
+    if (url.pathname.startsWith('/api/')) {
       const chunks = [];
-      let bytes = 0;
+      let size = 0;
       for await (const chunk of request) {
-        bytes += chunk.length;
-        if (bytes > 4096) return response.writeHead(413).end();
+        size += chunk.length;
+        if (size > 3_500_000) { response.writeHead(413).end(); return; }
         chunks.push(chunk);
       }
-      let data;
-      try { data = JSON.parse(Buffer.concat(chunks).toString()); } catch { return response.writeHead(400).end(); }
-      if (!phases.has(data?.phase) || typeof data.reply !== 'string' || !data.reply.trim() || data.reply.length > 240) {
-        return response.writeHead(400).end();
-      }
-      const action = await interpretReply(data,key,process.env.OPENAI_MODEL || undefined);
-      return response.writeHead(200,{'Content-Type':'application/json','Cache-Control':'no-store'}).end(JSON.stringify({action}));
+      result = await handleApi({
+        method: request.method,
+        path: url.pathname,
+        headers: request.headers,
+        body: Buffer.concat(chunks).toString('utf8'),
+      }, { store, key });
+    } else if (request.method === 'GET') {
+      result = await serveStatic(url.pathname);
     }
-    const asset = assets.get(path);
-    if (request.method !== 'GET' || !asset) return response.writeHead(404).end();
-    const content = await readFile(asset);
-    return response.writeHead(200,{'Content-Type':mime[asset.pathname.split('.').at(-1)] || 'application/octet-stream'}).end(content);
+    result ??= { status: 404, headers: {}, body: 'Not found' };
+    response.writeHead(result.status, { ...securityHeaders, ...result.headers }).end(result.body);
   } catch (error) {
-    console.error(error.message);
-    response.writeHead(502).end('Unable to interpret this reply.');
+    console.error(error);
+    response.writeHead(500).end('Server error');
   }
-}).listen(8091,'127.0.0.1',() => console.log('On Time Agent: http://localhost:8091'));
+}).listen(port, '127.0.0.1', () => {
+  console.log(`On Time Agent: http://localhost:${port}  (OpenAI key ${key ? 'loaded' : 'MISSING — add it to .env'})`);
+});

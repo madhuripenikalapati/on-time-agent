@@ -1,42 +1,63 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Password-protected On Time Agent pilot with synthetic data
+Description: On Time Agent — Telugu medicine check-in calls (hackathon pilot, sample data only)
+
 Parameters:
   PilotSecretArn:
     Type: String
-    Description: ARN of an existing Secrets Manager secret with OPENAI_API_KEY and PILOT_PASSWORD
+    Description: ARN of the Secrets Manager secret that holds OPENAI_API_KEY
     AllowedPattern: 'arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+'
+
 Resources:
+  Households:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires
+        Enabled: true
+
   Site:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: '$default'
       DefaultRouteSettings:
-        ThrottlingBurstLimit: 8
-        ThrottlingRateLimit: 4
+        ThrottlingBurstLimit: 40
+        ThrottlingRateLimit: 20
+
   App:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: build/
       Handler: aws.handler
       Runtime: nodejs22.x
-      Timeout: 27
-      MemorySize: 256
-      ReservedConcurrentExecutions: 4
+      Architectures: [arm64]
+      Timeout: 30
+      MemorySize: 512
+      ReservedConcurrentExecutions: 5
       Environment:
         Variables:
-          PILOT_SECRET_ARN: !Ref PilotSecretArn
+          SECRET_ARN: !Ref PilotSecretArn
+          TABLE_NAME: !Ref Households
       Policies:
         - Statement:
             - Effect: Allow
               Action: secretsmanager:GetSecretValue
               Resource: !Ref PilotSecretArn
+        - DynamoDBCrudPolicy:
+            TableName: !Ref Households
       Events:
         Root:
           Type: HttpApi
           Properties:
             ApiId: !Ref Site
-            Method: GET
+            Method: ANY
             Path: /
         Routes:
           Type: HttpApi
@@ -44,12 +65,14 @@ Resources:
             ApiId: !Ref Site
             Method: ANY
             Path: '/{proxy+}'
+
   AppLogs:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub '/aws/lambda/${App}'
       RetentionInDays: 14
+
 Outputs:
   PilotUrl:
-    Description: HTTPS pilot URL
+    Description: Public HTTPS URL
     Value: !Sub 'https://${Site}.execute-api.${AWS::Region}.${AWS::URLSuffix}/'

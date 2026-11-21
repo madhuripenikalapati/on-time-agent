@@ -4,3 +4,6 @@ node_modules/
 .aws-sam/
 *.zip
 .DS_Store
+.data/
+.claude/settings.local.json
+build/

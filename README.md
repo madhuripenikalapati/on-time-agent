@@ -1,30 +1,67 @@
-# On Time Agent
+# On Time
 
-Builders ’26 · Build Creative. A synthetic reviewed medicine plan becomes a Telugu browser check-in, a labeled pack card, and a live caregiver update.
+**Builders '26 · Build Creative.** Snap a parent's prescription. On Time calls them in Telugu at the right time, listens the way a person would, shows them the right pack when they're unsure, and tells the family how it went.
 
-Open the hosted site or serve `dist` over HTTP. Open the caregiver view in another tab of the same browser. Start a check-in and try the example replies or use a browser with Telugu speech recognition. Ask “Aagandi, ee tablet?” to open the pack. Try a mismatched label or a complete answer to the dose question. Use “Inka breakfast cheyyaledu” at the meal question to schedule a follow-up. Advance the demo clock to try it without waiting.
+## The journey
 
-The prototype uses prerendered Telugu agent audio, browser speech recognition when available, and rule-based Telugu turn handling. Typed replies exercise the same decisions. The caregiver feed and reviewed synthetic plan are persisted in local browser storage, including an optional small uploaded pack photo. A callback timer runs while the patient page is open. The demo uses one medicine and starts the first call manually. Use only synthetic data. A real phone connection, multi-device sharing, production authentication, prescription extraction, refill and appointment scheduling, voice cloning, and measured voice benchmarking are outside this implementation.
+1. **Prescription → plan.** Upload photos or a PDF (printed or handwritten). `gpt-4.1` drafts each medicine, dose, meal time and schedule (daily, Monday and Thursday, or once a week), leaving unclear fields blank. It also suggests a **simple name** for each one ("Glycomet → Sugar tablet", "Thyronorm → Thyroid tablet") so a patient who can't read brand names still knows which one is meant. A family member checks and edits every field, adds a photo of each pack, and saves. A schedule the app doesn't recognise is rejected, never silently turned into "daily".
+2. **A real Telugu phone conversation.** At the scheduled time, the patient's phone rings. A Realtime voice agent (`gpt-realtime` over WebRTC) holds a natural Telugu conversation grounded in the saved plan. It can record a dose, show the pack, schedule a callback and alert the family through tool calls.
+3. **The family sees it live.** The dashboard (any device) shows each dose as the patient reports it, the live transcript, alerts such as a pack mix-up or a new symptom, refill dates, and an English summary of every call.
 
-## Judge flow
+## Avunu ≠ Aagandi: Telugu turn-taking
 
-Download the synthetic sample prescription, upload its TXT file (or use **Load sample**), review the draft fields, optionally add a synthetic pack image, and save. PDF and image uploads are previewed locally and require manual entry or review. No OCR is used. Start the Telugu browser check-in and open the caregiver view in a second tab. The refill estimate uses today's count and the reviewed frequency, assuming the next dose is still due. Recount any time the estimate needs to change. Refill and appointment reminders are browser dashboard cards that update while the page is open. No phone or notification service is used. Do not upload real patient data.
+Standard voice bots treat every sound the same. They stop on every "హ్మ్", or they talk over a real "ఆగండి". On Time runs its own turn-taking layer (`dist/turns.mjs`, `dist/realtime.mjs`) on top of the Realtime model. The server is configured to neither auto-reply nor auto-interrupt.
 
-## OpenAI-assisted replies (local)
+| The caller says | While the agent is… | On Time | A standard bot |
+|---|---|---|---|
+| "సరే", "అవును", "హ్మ్" | explaining | lowers its voice for a moment, then **keeps going** | stops mid-sentence |
+| "అవును" | waiting after a question | **records the answer** | same |
+| "ఆగండి, ఈ tablet?" | explaining | **stops at once**, then shows the pack | stops, but also stops on every "హ్మ్" |
+| "సరే సరే… చాలు" | explaining | keeps listening through "సరే", **yields at "చాలు"** | stops at the first "సరే" |
+| pressure-cooker whistle, its own echo | explaining | ignores it | stops |
 
-Run `node server.mjs` with `OPENAI_API_KEY` configured in the server environment, then open http://localhost:8091. Use only synthetic check-ins: caller reply text and the current conversation phase are sent to OpenAI for intent classification. Keep the key out of browser code. OpenAI interprets varied replies, and the app keeps the safe demo prompts, documented care-plan constraints, and final-confirmation rules. The static judge site continues to work with its original local rules.
+The call screen has a **Standard bot** switch, so you can hear the difference on the same call. Every decision is logged on the call (what was heard, the decision, and the time to yield).
 
-## AWS pilot
+## Safety boundaries
 
-This stack serves the browser demo and OpenAI interpretation from one HTTPS origin. It requires a dedicated Secrets Manager secret containing JSON keys `OPENAI_API_KEY` (fresh project key) and `PILOT_PASSWORD` (a generated password of at least 24 characters). Use the default Secrets Manager encryption or grant the Lambda role access to the specific customer-managed key separately. Sign in with username `pilot`. Keep the pilot limited to synthetic data. Only the reply text and conversation phase go to OpenAI. The app does not log request bodies.
+- The agent only asks about medicines a person reviewed and saved. It never gives medical advice, changes a dose, or identifies a loose tablet by its look.
+- An unclear or mixed answer ("అవును, కానీ…") is never recorded as taken.
+- A label mismatch asks the patient to set the pack aside and check with the pharmacist or family. A symptom or an emergency word alerts the family, and emergencies get "call 108".
+- Follow-up calls happen only if the family allowed them. Changing the plan cancels a pending follow-up.
+- Hackathon prototype: use sample prescriptions only.
 
-With AWS CLI authenticated via SSO and AWS SAM CLI installed, run from this directory:
+## Run locally
 
 ```sh
-sam validate
-sam deploy --guided --stack-name on-time-agent-pilot --capabilities CAPABILITY_IAM
+echo "OPENAI_API_KEY=sk-..." > .env   # gitignored; never commit it
+node server.mjs                      # http://localhost:8091
+node --test test/*.test.mjs
 ```
 
-Select an AWS region and supply the Secrets Manager ARN when prompted. SAM may upload a deployment ZIP to a managed S3 bucket. Use the `PilotUrl` output after deploying. Keep the deployment small and set spend alerts in AWS and OpenAI. The API has request throttling and bounded Lambda concurrency. These controls limit traffic and do not set a billing ceiling.
+Open `/` and choose **Try the demo family**. That opens the **stage** view: the patient's phone on the left and the family dashboard on the right, which is the best layout for a projector. Use **Call Lakshmi now**, then answer on the phone. Voice calls need a microphone and Chrome, Edge or Safari. Open the phone view on a real phone with `?h=<id>&view=phone`.
 
-The shared pilot login is for synthetic testing. Real patient use needs individual identities and caregiver permissions, a protected data store with a retention policy, reliable background scheduling, and applicable clinical and privacy review. There is no real telephony or cross-device patient data in this stack.
+## Deploy (AWS)
+
+The stack is API Gateway (HTTP API), one Node 22 Lambda, DynamoDB for households, and Secrets Manager for the OpenAI key. The browser connects straight to OpenAI with a 10-minute client secret, so call audio never passes through the Lambda.
+
+```sh
+./scripts/build.sh     # packages only app code into build/ and on-time-agent-deploy.zip
+sam deploy --stack-name on-time-agent-pilot --capabilities CAPABILITY_IAM \
+  --resolve-s3 --parameter-overrides PilotSecretArn=<secret ARN with OPENAI_API_KEY>
+```
+
+From AWS CloudShell, upload `on-time-agent-deploy.zip`, unzip it, and run the same `sam deploy` command. Daily caps on new households, calls and prescription reads are enforced in DynamoDB. Also set a monthly budget on the OpenAI project.
+
+## Code map
+
+| Path | What it does |
+|---|---|
+| `dist/turns.mjs` | Telugu turn-taking classifier (listening sound, stop, question, echo, noise) |
+| `dist/realtime.mjs` | WebRTC call to OpenAI Realtime, ducking, yield, tool loop |
+| `dist/phone.mjs` | The patient's phone: ring, answer, live captions, pack card |
+| `dist/family.mjs` | Family dashboard: today, live call, alerts, medicines editor, call history |
+| `lib/agent.mjs` | Per-call agent instructions and tools, built from the saved plan |
+| `lib/household.mjs` | Plan, doses, calls, follow-ups and alerts (pure, unit-tested) |
+| `lib/openai.mjs` | Realtime client secrets and prescription reading |
+| `lib/api.mjs` | HTTP API shared by `server.mjs` (local) and `aws.mjs` (Lambda) |
+| `lib/store.mjs` | File store (local) and DynamoDB store with optimistic locking and quotas |
