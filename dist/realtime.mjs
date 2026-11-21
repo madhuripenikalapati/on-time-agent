@@ -331,7 +331,10 @@ export class VoiceCall {
         if (call.name === 'wait_for_patient') {
           // The patient went to take the tablet: keep the line open quietly for up to two minutes.
           this.waitingUntil = Date.now() + 120000;
-          output = { ok: true, note: 'Waiting quietly. Say nothing until the patient speaks.' };
+          // Silence after "not yet" sounds like a dropped call: if nothing was said, say the line first.
+          output = spoke
+            ? { ok: true, note: 'Waiting quietly. Say nothing until the patient speaks.' }
+            : { ok: true, note: 'You have not said anything yet. Now say the "not taken yet" line out loud (can you take it now? I will stay on the line), in the patient\'s language. Do not call any tool. Then wait quietly.' };
           if (!this.agentSpeaking) this.armIdle();
         } else if (call.name === 'record_dose' && askedJustNow) {
           output = { ok: false, error: 'Not recorded: you just asked the question. Wait for the patient to answer, then record what they say.' };

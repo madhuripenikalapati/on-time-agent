@@ -205,3 +205,15 @@ test('"not yet": the agent waits on the line instead of hanging up, then asks on
     mock.timers.reset();
   }
 });
+
+test('waiting without having said anything first: the agent is asked to say the line', async () => {
+  const { call, sent } = harness();
+  call.callerTurn();
+  sent.length = 0;
+  call.handle({ type: 'response.done', response: { output: [tool('wait_for_patient', {})] } });
+  await settle();
+  const output = sent.find(e => e.type === 'conversation.item.create');
+  assert.match(output.item.output, /not taken yet/);
+  assert.equal(sent.at(-1).type, 'response.create', 'it speaks before waiting');
+  call.clearIdle(); // don't leave the two-minute wait timer running
+});
