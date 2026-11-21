@@ -45,16 +45,16 @@
 <p>Compare the saved details with the original label. If the label is different or unreadable, ask a pharmacist to check it.</p>
 <div class="actions"><button id="match">Label matches</button><button id="mismatch">Different or unreadable</button></div></section>
 <section class="card plan" id="review-panel"><h2>Prescription and schedule</h2>
-<p class="muted">Upload a synthetic TXT, PDF, or image. Sample-format TXT fills a draft. Review PDF or image instructions and enter the schedule below.</p>
-<div class="source-controls"><label>Synthetic prescription <input id="prescription" type="file" accept=".txt,.pdf,image/png,image/jpeg,image/webp"></label><a href="./sample-prescription.txt" download>Download sample prescription</a> · <button id="sample" type="button">Load sample</button>
-<p id="source-status" role="status"></p><pre id="source-text" hidden></pre><img id="source-photo" alt="Uploaded prescription preview" hidden><object id="source-pdf" type="application/pdf" aria-label="Uploaded prescription PDF" hidden><p>Use the document preview link to view this PDF.</p></object><a id="source-link" target="_blank" rel="noopener" hidden>Open uploaded PDF</a></div>
+<p class="muted">Select up to three synthetic prescription pages. Sample TXT fills a draft. On the AWS pilot, you can send PDFs and photos to OpenAI to draft fields for review.</p>
+<div class="source-controls"><label>Synthetic prescription <input id="prescription" type="file" multiple accept=".txt,.pdf,image/png,image/jpeg,image/webp"></label><a href="./sample-prescription.txt" download>Download sample prescription</a> · <button id="sample" type="button">Load sample</button>
+<div class="actions"><button type="button" id="extract-prescription" hidden>Draft from uploaded pages with OpenAI</button></div><div id="draft-choices" aria-live="polite"></div><p id="source-status" role="status"></p><pre id="source-text" hidden></pre><img id="source-photo" alt="Uploaded prescription preview" hidden><object id="source-pdf" type="application/pdf" aria-label="Uploaded prescription PDF" hidden><p>Use the document preview link to view this PDF.</p></object><a id="source-link" target="_blank" rel="noopener" hidden>Open uploaded PDF</a></div>
 <form id="plan">
 <label>Medicine name<input name="name" required maxlength="60"></label>
 <label>Pack strength<input name="strength" required maxlength="40"></label>
 <label>Prescribed amount<input name="amount" required maxlength="40"></label>
-<label>Meal<select name="meal"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option></select></label>
-<label>Timing<select name="timing"><option value="after">After meal</option><option value="before">Before meal</option><option value="fixed">Fixed time</option></select></label>
-<label>Frequency<select name="days"><option value="daily">Daily</option><option value="mon-thu">Monday and Thursday</option></select></label>
+<label>Meal<select name="meal" required><option value="">Select meal</option><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option></select></label>
+<label>Timing<select name="timing" required><option value="">Select timing</option><option value="after">After meal</option><option value="before">Before meal</option><option value="fixed">Fixed time</option></select></label>
+<label>Frequency<select name="days" required><option value="">Select frequency</option><option value="daily">Daily</option><option value="mon-thu">Monday and Thursday</option></select></label>
 <label>Usual meal or fixed time<input name="time" type="time" required></label>
 <label>Follow-up delay (minutes)<input name="delay" type="number" min="1" max="180" required></label>
 <label>Demo pack photo<input id="photo-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>

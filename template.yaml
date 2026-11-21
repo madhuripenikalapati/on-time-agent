@@ -20,7 +20,7 @@ Resources:
       CodeUri: .
       Handler: aws.handler
       Runtime: nodejs22.x
-      Timeout: 12
+      Timeout: 27
       MemorySize: 256
       ReservedConcurrentExecutions: 4
       Environment:

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { interpretReply } from './openai.mjs';
+import { extractPrescription, maxPrescriptionBody } from './prescription.mjs';
 
 const phases = new Set(['explaining','meal','dose','pack']);
 const root = new URL('./dist/', import.meta.url);
@@ -55,21 +56,27 @@ export function createHandler(secretLoader = readSecret, interpreter = interpret
       const path = event.rawPath;
       const incoming = event.headers ?? {};
       if (!((method === 'GET' && (assets.has(path) || path === '/api/status')) ||
-            (method === 'POST' && path === '/api/interpret'))) return reply(404);
+            (method === 'POST' && ['/api/interpret','/api/prescription'].includes(path)))) return reply(404);
       if (!incoming.authorization) return reply(401,'Sign in to the synthetic pilot.',{'WWW-Authenticate':'Basic realm="On Time Agent Pilot", charset="UTF-8"'});
       const secret = await secretLoader();
       if (!authenticated(incoming.authorization,secret.PILOT_PASSWORD)) {
         return reply(401,'Sign in to the synthetic pilot.',{'WWW-Authenticate':'Basic realm="On Time Agent Pilot", charset="UTF-8"'});
       }
-      if (path === '/api/status') return json(200,{openai:true});
-      if (path === '/api/interpret') {
+      if (path === '/api/status') return json(200,{openai:true,prescription:true});
+      if (path === '/api/interpret' || path === '/api/prescription') {
+        const extraction = path === '/api/prescription';
+        const limit = extraction ? maxPrescriptionBody : 4096;
         if (incoming.origin !== 'https://' + request.domainName) return json(403,{error:'Open the pilot page to interpret a reply.'});
         if (!/^application\/json(?:\s*;|$)/i.test(incoming['content-type'] ?? '')) return json(415,{error:'Expected JSON.'});
-        if (typeof event.body !== 'string' || event.body.length > 8192) return json(413,{error:'Reply too large.'});
+        if (typeof event.body !== 'string' || event.body.length > limit * 2) return json(413,{error:'Reply too large.'});
         const buffer = Buffer.from(event.body,event.isBase64Encoded ? 'base64' : 'utf8');
-        if (buffer.length > 4096) return json(413,{error:'Reply too large.'});
+        if (buffer.length > limit) return json(413,{error:'Reply too large.'});
         let data;
         try { data = JSON.parse(buffer.toString('utf8')); } catch { return json(400,{error:'Invalid JSON.'}); }
+        if (extraction) {
+          try { return json(200,await extractPrescription(data?.files,secret.OPENAI_API_KEY)); }
+          catch (error) { if (error instanceof TypeError) return json(400,{error:error.message}); throw error; }
+        }
         if (!phases.has(data?.phase) || typeof data.reply !== 'string' || !data.reply.trim() || data.reply.length > 240) {
           return json(400,{error:'A short reply and valid phase are required.'});
         }

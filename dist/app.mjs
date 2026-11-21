@@ -40,6 +40,7 @@ let interpretationSequence = 0;
 if (location.protocol === 'https:' || ['localhost','127.0.0.1'].includes(location.hostname)) {
   fetch('/api/status').then(response => response.ok ? response.json() : {}).then(config => {
     openai = Boolean(config.openai);
+    get('extract-prescription').hidden = !config.prescription;
     if (openai) get('audio-status').textContent = 'OpenAI interpretation enabled for this demo.';
   }).catch(() => {});
 }
@@ -432,8 +433,14 @@ function beginReview() {
   return true;
 }
 get('prescription').onchange = async () => {
-  const file = get('prescription').files[0];
+  const files = Array.from(get('prescription').files);
+  const file = files[0];
+  get('draft-choices').replaceChildren();
   if (!file) return;
+  if (files.length > 3) {
+    get('source-status').textContent = 'Choose up to three prescription files.';
+    return;
+  }
   const isText = /\.txt$/i.test(file.name);
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
   const isImage = ['image/png','image/jpeg','image/webp'].includes(file.type);
@@ -458,7 +465,60 @@ get('prescription').onchange = async () => {
     get('source-photo').src = previewUrl;
     get('source-photo').hidden = false;
   }
-  get('source-status').textContent = 'File opened locally. Enter or confirm the fields below against the document.';
+  get('source-status').textContent = files.length + ' file(s) selected. Previewing the first page. Enter the fields below or use OpenAI drafting where available.';
+};
+get('extract-prescription').onclick = async () => {
+  const selected = Array.from(get('prescription').files);
+  if (!selected.length || selected.length > 3 || selected.some(file => !['application/pdf','image/jpeg','image/png','image/webp'].includes(file.type))
+    || selected.reduce((sum,file) => sum + file.size,0) > 2250000) {
+    get('source-status').textContent = 'Choose one to three PDFs or photos totaling 2.25 MB or less.';
+    return;
+  }
+  if (!beginReview()) return;
+  const control = get('extract-prescription');
+  control.disabled = true;
+  get('prescription').disabled = true;
+  get('sample').disabled = true;
+  get('source-status').textContent = 'Drafting from the selected synthetic files…';
+  try {
+    const files = await Promise.all(selected.map(file => new Promise((resolve,reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => resolve({type:file.type,data:String(reader.result).split(',')[1]});
+      reader.readAsDataURL(file);
+    })));
+    const response = await fetch('/api/prescription',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({files}),signal:AbortSignal.timeout(28000)});
+    if (!response.ok) throw new Error('Could not draft these files.');
+    const draft = await response.json();
+    const container = get('draft-choices');
+    container.replaceChildren();
+    get('source-status').textContent = draft.medicines.length
+      ? 'Choose one medicine for this demo. Review against the source and fill any missing fields. ' + draft.notes
+      : 'No readable medicine entry was found. Review the source manually. ' + draft.notes;
+    for (const row of draft.medicines) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = [row.name || 'Unclear medicine',row.strength].filter(Boolean).join(' · ');
+      button.onclick = () => {
+        if (!beginReview()) return;
+        for (const name of ['name','strength','amount','meal','timing','time','days']) {
+          const input = planForm.elements.namedItem(name);
+          input.value = row[name] ?? '';
+        }
+        planForm.elements.namedItem('review').checked = false;
+        get('source-status').textContent = 'Review the draft against the prescription. Source excerpt: ' + (row.source || 'Unavailable.');
+      };
+      container.append(button);
+      if (draft.medicines.length === 1) button.click();
+    }
+  } catch {
+    get('source-status').textContent = 'OpenAI drafting did not complete. Review and enter the schedule manually.';
+  } finally {
+    control.disabled = false;
+    get('prescription').disabled = false;
+    get('sample').disabled = false;
+  }
 };
 get('sample').onclick = async () => {
   if (!beginReview()) return;
