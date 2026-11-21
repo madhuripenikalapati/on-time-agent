@@ -57,7 +57,8 @@ export function mountPhone(root, id, { stage = false } = {}) {
   }, { interval: 1200 });
 
   function render() {
-    phone.replaceChildren(statusBar(), ...view().filter(Boolean));
+    // The pretend status bar is only for the projector view; a real phone has its own.
+    phone.replaceChildren(...[stage ? statusBar() : null, ...view()].filter(Boolean));
   }
 
   function statusBar() {

@@ -11,6 +11,8 @@ if (params.get('app') === '1') {
   try { phone = localStorage.getItem('on-time:phone'); } catch {}
   if (phone) location.replace('?h=' + phone + '&view=phone');
 }
+// Pages without a family (the landing page) install the general app.
+if (!params.get('h')) document.head.append(h('link', { rel: 'manifest', href: '/manifest.webmanifest' }));
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const id = params.get('h');
 const view = params.get('view');
@@ -18,9 +20,9 @@ const remembered = (() => { try { return localStorage.getItem('on-time:last'); }
 
 if (id && /^[A-Za-z0-9_-]{8,24}$/.test(id)) {
   try { if (view !== 'phone') localStorage.setItem('on-time:last', id); } catch {}
-  // "Add to Home Screen" then opens this family's page, not the landing page.
-  const manifest = document.querySelector('link[rel="manifest"]');
-  if (manifest && view !== 'stage') manifest.href = '/api/h/' + id + (view === 'phone' ? '/manifest-phone' : '/manifest-family');
+  // "Add to Home Screen" then opens this family's page, not the landing page. The link is added
+  // here, never in index.html: iPhone reads it as the page loads, before code could change it.
+  if (view !== 'stage') document.head.append(h('link', { rel: 'manifest', href: '/api/h/' + id + (view === 'phone' ? '/manifest-phone' : '/manifest-family') }));
   if (view === 'phone') {
     document.title = 'On Time · Phone';
     mountPhone(app, id);
