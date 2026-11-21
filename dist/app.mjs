@@ -18,6 +18,9 @@ const remembered = (() => { try { return localStorage.getItem('on-time:last'); }
 
 if (id && /^[A-Za-z0-9_-]{8,24}$/.test(id)) {
   try { if (view !== 'phone') localStorage.setItem('on-time:last', id); } catch {}
+  // "Add to Home Screen" then opens this family's page, not the landing page.
+  const manifest = document.querySelector('link[rel="manifest"]');
+  if (manifest && view !== 'stage') manifest.href = '/api/h/' + id + (view === 'phone' ? '/manifest-phone' : '/manifest-family');
   if (view === 'phone') {
     document.title = 'On Time · Phone';
     mountPhone(app, id);
