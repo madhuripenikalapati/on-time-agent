@@ -313,10 +313,17 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const reviewed = h('input', { type: 'checkbox' });
 
     const drawList = () => list.replaceChildren(...editor.medicines.map((m, index) => medCard(m, index, drawList)),
-      h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => { editor.medicines.push({ name: '', meal: 'breakfast', timing: 'after', days: 'daily', amount: '1 tablet' }); drawList(); } }, icon('plus'), 'Add medicine')));
+      h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => { editor.medicines.push({ name: '', meal: 'breakfast', timing: 'after', days: 'daily', amount: '1 tablet' }); drawList(); } }, icon('plus'), 'Add medicine'),
+        editor.medicines.length ? h('button', { class: 'btn danger', onclick: () => {
+          if (!confirm('Remove all ' + editor.medicines.length + ' medicines from this list, with their pack photos and tablet counts? Nothing changes for calls until you press Save plan.')) return;
+          editor.medicines = [];
+          reviewed.checked = false;
+          drawList();
+          toast('All medicines removed. Upload a new prescription or add medicines, then save.');
+        } }, 'Remove all medicines') : null));
 
     const fileInput = h('input', { type: 'file', multiple: true, accept: 'image/png,image/jpeg,image/webp,application/pdf', onchange: () => choose(Array.from(fileInput.files)) });
-    const readButton = h('button', { class: 'btn primary', disabled: true, onclick: read }, icon('sparkle'), 'Read prescription with AI');
+    const readButton = h('button', { class: 'btn primary', disabled: true, onclick: () => read() }, icon('sparkle'), 'Read prescription with AI');
     const drop = h('label', { class: 'dropzone' }, fileInput,
       h('strong', {}, 'Upload prescription photos or PDFs'),
       h('span', { class: 'muted small' }, 'As many pages as you have · printed or handwritten'));
@@ -366,7 +373,23 @@ export function mountFamily(root, id, { stage = false } = {}) {
       return groups;
     }
 
-    async function read() {
+    // "Glycomet", "Tab. Glycomet 500 mg" and "GLYCOMET 500" are the same medicine.
+    const baseName = name => String(name ?? '').toLowerCase().replace(/\btab(let)?s?\b\.?|\bcap(sule)?s?\b\.?/g, '').replace(/\d+(\.\d+)?\s*(mg|mcg|g|iu|k|ml)?\b/g, '').replace(/[^a-z]/g, '');
+
+    // A plan already has medicines: ask whether this prescription replaces them or adds to them
+    // (a new prescription from the same doctor, or a second doctor's).
+    async function read(mode) {
+      const existing = editor.medicines.filter(m => m.name?.trim()).length;
+      if (existing && mode !== 'replace' && mode !== 'add') {
+        status.replaceChildren(h('div', { class: 'notice warn choice' },
+          h('b', {}, 'You already have ' + existing + ' medicine' + (existing === 1 ? '' : 's') + ' in the plan. What should this prescription do?'),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn small primary', onclick: () => read('replace') }, 'Replace them (new prescription)'),
+            h('button', { class: 'btn small', onclick: () => read('add') }, 'Add to them (another doctor)'),
+            h('button', { class: 'btn small ghost', onclick: () => status.replaceChildren() }, 'Cancel')),
+          h('div', { class: 'small' }, 'Either way, pack photos and tablet counts are kept for medicines that stay.')));
+        return;
+      }
       readButton.disabled = true;
       const progress = text => { readButton.replaceChildren(icon('sparkle'), text); status.replaceChildren(h('p', { class: 'notice' }, text)); };
       try {
@@ -391,30 +414,46 @@ export function mountFamily(root, id, { stage = false } = {}) {
         // The same medicine and timing on two pages is one row.
         const seen = new Set();
         const unique = rows.filter(row => {
-          // "Glycomet", "Tab. Glycomet 500 mg" and "GLYCOMET 500" are the same medicine.
-          const base = String(row.name ?? '').toLowerCase().replace(/\btab(let)?s?\b\.?|\bcap(sule)?s?\b\.?/g, '').replace(/\d+(\.\d+)?\s*(mg|mcg|g|iu|k|ml)?\b/g, '').replace(/[^a-z]/g, '');
-          const key = [base, row.meal, row.timing, row.days].map(v => String(v ?? '').toLowerCase()).join('|');
+          const key = [baseName(row.name), row.meal, row.timing, row.days].map(v => String(v ?? '').toLowerCase()).join('|');
           if (seen.has(key)) return false;
           seen.add(key);
           return true;
         }).slice(0, 20);
         if (!unique.length) throw new Error('No medicines could be read. Add them by hand below.');
-        editor.medicines = unique.map(row => ({
+        // A medicine that stays keeps its pack photo and tablet count (morning and night rows share one strip).
+        const before = editor.medicines.filter(m => m.name?.trim());
+        const packOf = name => before.find(m => baseName(m.name) === baseName(name) && (m.photo || (m.stock !== '' && m.stock != null)));
+        const drafted = unique.map(row => ({
           name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '',
           nickname: row.nickname ?? '', use: row.use ?? '', aiNickname: Boolean(row.nickname || row.use),
           // Indian prescriptions write "before food" when it matters; otherwise it is taken after the meal.
           meal: row.meal ?? '', timing: row.timing ?? (row.meal ? 'after' : ''), assumedTiming: !row.timing && Boolean(row.meal), time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '', doubt: row.doubt ?? '',
           courseDays: /^\d{1,3}$/.test(String(row.duration_days ?? '')) && +row.duration_days >= 1 && +row.duration_days <= 365 ? +row.duration_days : '',
-        }));
+        })).map(m => { const pack = packOf(m.name); return pack ? { ...m, photo: pack.photo ?? m.photo, stock: pack.stock ?? m.stock } : m; });
+        let added = drafted;
+        if (mode === 'add') {
+          // Skip what is already in the plan (same medicine, same meal and days).
+          const have = new Set(before.map(m => [baseName(m.name), m.meal, m.days].join('|')));
+          added = drafted.filter(m => !have.has([baseName(m.name), m.meal, m.days].join('|')));
+          const room = 20 - before.length;
+          if (added.length > room) { toast('Only ' + room + ' more medicines fit (20 at most). Remove some first.', 'bad'); added = added.slice(0, Math.max(0, room)); }
+          editor.medicines = [...before, ...added];
+        } else {
+          editor.medicines = drafted;
+        }
+        const kept = new Set(drafted.filter(m => packOf(m.name)).map(m => baseName(m.name))).size;
         reviewed.checked = false;
         drawList();
         // A name the readings disagreed on gets no suggestion until the family corrects it.
-        await suggestNames(editor.medicines.filter(m => !m.doubt && (!m.nickname || !m.use)));
-        const unsure = editor.medicines.filter(m => m.doubt).length;
+        await suggestNames(added.filter(m => !m.doubt && (!m.nickname || !m.use)));
+        const unsure = added.filter(m => m.doubt).length;
         // Line-by-line doubts are shown on each medicine; keep only the model's own remarks here.
         const remarks = notes.map(n => n.replace(/^Please check against the prescription:.*?\.(?= [A-Z][a-z]|$)/s, '').replace(/Line \d+ was read as [^.]*\./g, '').trim()).filter(Boolean);
         status.replaceChildren(h('div', { class: 'notice' + (unsure ? ' warn' : '') },
-          h('b', {}, '✨ AI filled in ' + unique.length + ' medicine' + (unique.length > 1 ? 's' : '') + ' from ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '. '),
+          h('b', {}, mode === 'add'
+            ? '✨ Added ' + added.length + ' medicine' + (added.length === 1 ? '' : 's') + ' from this prescription' + (drafted.length > added.length ? ' (' + (drafted.length - added.length) + ' already in the plan)' : '') + '. '
+            : '✨ AI filled in ' + unique.length + ' medicine' + (unique.length > 1 ? 's' : '') + ' from ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + (mode === 'replace' ? ', replacing the old list' : '') + '. '),
+          kept ? 'Kept the pack photo and tablet count for ' + kept + ' that stay' + (kept === 1 ? 's' : '') + '. ' : '',
           unsure ? unsure + (unsure === 1 ? ' is' : ' are') + ' marked “AI wasn’t sure”: check those first. ' : '',
           'Now compare every medicine below with the prescription, correct anything wrong, and save.',
           remarks.length ? h('div', { class: 'small remarks' }, 'AI noted: ' + remarks.join(' ')) : null));
