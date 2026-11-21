@@ -16,6 +16,8 @@ export function cleanText(text, { caller = false } = {}) {
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
+const OVERLAP_PAUSE_MS = 400;
+const REPLY_PAUSE_MS = 850;
 const LONG_SPEECH_MS = 2000; // still talking this long over the agent is never just "hmm"
 
 // Voice activity detection in the browser. OpenAI's own detector cuts the agent's audio the
@@ -23,9 +25,9 @@ const LONG_SPEECH_MS = 2000; // still talking this long over the agent is never 
 // "సరే while it talks" impossible. So the server's detector is off and this decides when
 // the caller starts and stops; only finished utterances are sent for transcription.
 export class VoiceDetector {
-  constructor(stream, { onStart, onEnd }) {
+  constructor(stream, { onStart, onEnd, pauseMs = () => REPLY_PAUSE_MS }) {
     this.stream = stream;
-    Object.assign(this, { onStart, onEnd });
+    Object.assign(this, { onStart, onEnd, pauseMs });
     this.speaking = false;
     this.voiced = 0;
     this.lastVoiceAt = 0;
@@ -61,7 +63,7 @@ export class VoiceDetector {
         this.voiced = Math.max(0, this.voiced - 20);
         this.floor = this.floor * 0.97 + rms * 0.03; // adapt to the room's background noise
       }
-      if (this.speaking && now - this.lastVoiceAt > 850) { // elders pause mid-sentence
+      if (this.speaking && now - this.lastVoiceAt > this.pauseMs()) {
         this.speaking = false;
         this.voiced = 0;
         this.onEnd?.();
@@ -129,7 +131,14 @@ export class VoiceCall {
     if (!response.ok) throw new Error('Could not start the voice call (' + response.status + ').');
     await this.pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
     await opened;
-    this.detector = new VoiceDetector(this.microphone, { onStart: () => this.speechStarted(), onEnd: () => this.speechEnded() });
+    this.detector = new VoiceDetector(this.microphone, {
+      onStart: () => this.speechStarted(),
+      onEnd: () => this.speechEnded(),
+      // Get the first word to transcription sooner during barge-in. Ordinary replies
+      // keep the longer pause so the caller can finish at their own pace.
+      pauseMs: () => this.mode === 'ontime' && this.current?.agentSpeaking && !this.current.yielded
+        ? OVERLAP_PAUSE_MS : REPLY_PAUSE_MS,
+    });
     await this.detector.start();
     // Drop silence (and any echo) that piles up in the input buffer between utterances.
     this.hygiene = setInterval(() => {
@@ -335,7 +344,8 @@ export class VoiceCall {
   }
 
   logTurn(heard, decision, reason, utterance) {
-    const ms = Math.round(performance.now() - (utterance.stoppedAt ?? utterance.startedAt));
+    const from = decision === 'yield' ? utterance.startedAt : (utterance.stoppedAt ?? utterance.startedAt);
+    const ms = Math.round(performance.now() - from);
     this.update({ type: 'turn', heard, decision, reason, ms });
   }
 

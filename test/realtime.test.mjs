@@ -255,3 +255,22 @@ test('a split avunu cannot answer a new dose question or be reused for another m
   assert.deepEqual(tools.map(entry => entry.args.medicine_id), ['a']);
   call.hangUp();
 });
+
+test('barge-in pause sends the first word to transcription while regular replies keep their pause', () => {
+  const stops = [];
+  const vad = new VoiceDetector(null, { pauseMs: () => 400, onEnd: () => stops.push(true) });
+  for (let t = 0; t < 500; t += 20) vad.level(0.08, t);
+  for (let t = 500; t <= 900; t += 20) vad.level(0, t);
+  assert.equal(stops.length, 1);
+});
+
+test('transcribed aagandi stops playback, while avunu and sare leave it running', () => {
+  for (const [reply, shouldStop] of [['ఆగండి', true], ['అవును', false], ['సరే', false]]) {
+    const { call, sent } = harness();
+    call.agentSpeaking = true;
+    call.utterances.set('overlap', { startedAt: performance.now(), agentSpeaking: true });
+    call.decide('overlap', reply);
+    assert.equal(sent.some(e => e.type === 'output_audio_buffer.clear'), shouldStop, reply);
+    call.hangUp();
+  }
+});
