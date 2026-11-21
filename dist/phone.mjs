@@ -2,7 +2,6 @@
 import { h, icon, api, poll, time, slotOf, packCard } from './ui.mjs';
 import { VoiceCall } from './realtime.mjs';
 import { takenOn } from './schedule.mjs';
-import { turnChip } from './family.mjs';
 import { languageOf, fill } from './languages.mjs';
 
 // Screen text in the patient's language (from dist/languages.mjs).
@@ -111,7 +110,6 @@ export function mountPhone(root, id, { stage = false } = {}) {
         h('div', { class: 'soft small te' }, agentState === 'listening' || agentState === 'ducked' ? T.listening : T.speaking)),
       pack ? packView() : null,
       h('div', { class: 'caption te', 'aria-live': 'polite' }, caption || '…', heard ? h('span', { class: 'you' }, '🗣 ' + heard) : null),
-      h('div', { class: 'turn-strip' }, turns.slice(-3).map(turnChip)),
       error ? h('div', { class: 'error-banner' }, error) : null,
       h('div', { class: 'call-foot' }, h('button', { class: 'round hangup', 'aria-label': 'Hang up', onclick: () => voice?.hangUp('hung-up') }, icon('phone'))),
     )];
