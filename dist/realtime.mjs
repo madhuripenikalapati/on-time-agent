@@ -1,7 +1,7 @@
 // A live voice call with the OpenAI Realtime API over WebRTC, wrapped in our own
 // Telugu turn-taking layer. The server never auto-replies or auto-interrupts:
 // this file decides when the agent keeps talking, yields, or answers.
-import { classifyTurn } from './turns.mjs';
+import { classifyTurn, isListeningSound, normalize } from './turns.mjs';
 
 const DUCKED_VOLUME = 0.22;
 
@@ -86,9 +86,10 @@ export class VoiceCall {
    * @param {(name: string, args: object) => Promise<object>} options.onTool
    * @param {(event: object) => void} options.onUpdate UI updates
    */
-  constructor({ secret, microphone, mode = 'ontime', onTool, onUpdate, farewell }) {
+  constructor({ secret, microphone, mode = 'ontime', onTool, onUpdate, farewell, doseQuestions = [] }) {
     // farewell: the two goodbye lines in the patient's language, for the safety-net goodbye.
     Object.assign(this, { secret, microphone, mode, onTool, onUpdate, farewell });
+    this.doseQuestions = doseQuestions;
     this.audio = new Audio();
     this.audio.autoplay = true;
     this.agentSpeaking = false;
@@ -179,6 +180,7 @@ export class VoiceCall {
       case 'response.created':
         this.responseActive = true;
         this.agentText = '';
+        this.openDoseQuestion = null;
         this.clearIdle();
         break;
 
@@ -188,6 +190,8 @@ export class VoiceCall {
         break;
 
       case 'output_audio_buffer.stopped':
+        this.openDoseQuestion = this.doseQuestionFor(this.agentText);
+        // Fall through to the shared playback cleanup.
       case 'output_audio_buffer.cleared':
         this.agentSpeaking = false;
         this.duck(false);
@@ -202,7 +206,8 @@ export class VoiceCall {
         break;
 
       case 'response.output_audio_transcript.done':
-        this.update({ type: 'agent-said', text: cleanText(event.transcript ?? this.agentText) });
+        this.agentText = cleanText(event.transcript ?? this.agentText);
+        this.update({ type: 'agent-said', text: this.agentText });
         break;
 
       case 'input_audio_buffer.committed': {
@@ -228,6 +233,7 @@ export class VoiceCall {
         // Did the agent end this very turn on a question? Then it has no answer yet.
         const said = messages.flatMap(m => m.content ?? []).map(c => c.transcript ?? c.text ?? '').join(' ').trim();
         const askedJustNow = /[?？]\s*$/u.test(said);
+        if (askedJustNow) this.doseAnswer = null;
         if (calls.length) this.runTools(calls, this.spokeSinceCaller, askedJustNow);
         else if (this.wantResponse) this.requestResponse();
         break;
@@ -241,10 +247,17 @@ export class VoiceCall {
     }
   }
 
+  doseQuestionFor(text) {
+    if (!/[?？]\s*$/u.test(text)) return null;
+    const said = normalize(text).replace(/？/gu, '?');
+    const matches = this.doseQuestions.filter(question => said.endsWith(normalize(question.text).replace(/？/gu, '?')));
+    return matches.length === 1 ? { medicineId: matches[0].medicineId } : null;
+  }
+
   // The caller started speaking (from our voice detector).
   speechStarted() {
     this.clearIdle();
-    const utterance = { startedAt: performance.now(), agentSpeaking: this.agentSpeaking, yielded: false };
+    const utterance = { startedAt: performance.now(), agentSpeaking: this.agentSpeaking, yielded: false, doseQuestion: this.openDoseQuestion };
     this.current = utterance;
     this.update({ type: 'caller-speaking' });
     if (!utterance.agentSpeaking) return;
@@ -282,10 +295,16 @@ export class VoiceCall {
     const utterance = this.utterances.get(itemId) ?? { startedAt: performance.now(), agentSpeaking: false };
     this.utterances.delete(itemId);
     clearTimeout(utterance.timer);
-    // If the agent has since finished on a question, a reply that overlapped its last
-    // words ("అవును" said a beat early) is an answer, not a listening sound.
-    const finishedOnQuestion = !this.agentSpeaking && /[?？]\s*$/u.test(this.agentText.trim());
-    const speakingWhenStarted = utterance.agentSpeaking && !utterance.yielded && !finishedOnQuestion;
+    // Bind the reply where speech began. A late transcript cannot borrow a question
+    // that was still playing or wasn't even asked when the caller started speaking.
+    const speakingWhenStarted = utterance.agentSpeaking && (!utterance.yielded || isListeningSound(transcript));
+    const question = utterance.doseQuestion;
+    const interrupt = classifyTurn(transcript, { agentSpeaking: true }).reason;
+    if (question && this.openDoseQuestion === question && !utterance.agentSpeaking && transcript.trim()
+      && !/[?？]/u.test(transcript) && !['stop word', 'question'].includes(interrupt)) {
+      this.doseAnswer = question;
+      this.openDoseQuestion = null;
+    }
 
     if (this.mode === 'standard') {
       if (transcript.trim()) {
@@ -336,11 +355,12 @@ export class VoiceCall {
             ? { ok: true, note: 'Waiting quietly. Say nothing until the patient speaks.' }
             : { ok: true, note: 'You have not said anything yet. Now say the "not taken yet" line out loud (can you take it now? I will stay on the line), in the patient\'s language. Do not call any tool. Then wait quietly.' };
           if (!this.agentSpeaking) this.armIdle();
-        } else if (call.name === 'record_dose' && askedJustNow) {
-          output = { ok: false, error: 'Not recorded: you just asked the question. Wait for the patient to answer, then record what they say.' };
-          blocked = true;
+        } else if (call.name === 'record_dose' && (askedJustNow || args.medicine_id !== this.doseAnswer?.medicineId)) {
+          output = { ok: false, error: 'Not recorded: a fresh answer to this medicine’s dose question is required. Ask the exact dose question if you have not just asked it, then wait.' };
+          blocked = askedJustNow;
           this.update({ type: 'guard', message: 'Blocked a dose record before the patient answered' });
         } else {
+          if (call.name === 'record_dose') this.doseAnswer = null;
           output = await this.onTool(call.name, args);
         }
       } catch (error) {

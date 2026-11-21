@@ -10,6 +10,7 @@ function harness() {
   const tools = [];
   const call = new VoiceCall({
     secret: 'test',
+    doseQuestions: [{ medicineId: 'a', text: 'BP tablet వేసుకున్నారా?' }, { medicineId: 'b', text: 'Sugar tablet వేసుకున్నారా?' }],
     microphone: null,
     onTool: async (name, args) => { tools.push({ name, args }); return { ok: true }; },
     onUpdate: () => {},
@@ -34,12 +35,18 @@ test('a dose recorded in the same turn as the question is blocked, and the agent
 
 test('a dose recorded after the patient answered goes through and the agent continues', async () => {
   const { call, sent, tools } = harness();
-  call.callerTurn();
+  call.agentText = 'BP tablet వేసుకున్నారా?';
+  call.handle({ type: 'output_audio_buffer.stopped' });
+  call.speechStarted();
+  call.utterances.set('reply', call.current);
+  call.current = null;
+  call.decide('reply', 'అవును');
   sent.length = 0;
   call.handle({ type: 'response.done', response: { output: [said('సరే, నమోదు చేశాను.'), tool('record_dose', { medicine_id: 'a', status: 'taken' })] } });
   await settle();
   assert.deepEqual(tools.map(t => t.name), ['record_dose']);
   assert.equal(sent.at(-1).type, 'response.create');
+  call.hangUp();
 });
 
 test('ending a call without having spoken asks for one Telugu goodbye with tools off', async () => {
@@ -216,4 +223,35 @@ test('waiting without having said anything first: the agent is asked to say the 
   assert.match(output.item.output, /not taken yet/);
   assert.equal(sent.at(-1).type, 'response.create', 'it speaks before waiting');
   call.clearIdle(); // don't leave the two-minute wait timer running
+});
+
+test('a split avunu cannot answer a new dose question or be reused for another medicine', async () => {
+  const { call, sent, tools } = harness();
+  call.agentText = 'Breakfast done?';
+  call.handle({ type: 'output_audio_buffer.stopped' });
+  call.decide('meal', 'హా అవును');
+  call.handle({ type: 'response.created' });
+  call.handle({ type: 'output_audio_buffer.started' });
+  call.speechStarted();
+  call.utterances.set('late', call.current);
+  call.current = null;
+  call.agentText = 'BP tablet వేసుకున్నారా?';
+  call.handle({ type: 'response.done', response: { output: [said(call.agentText)] } });
+  call.handle({ type: 'output_audio_buffer.stopped' });
+  call.decide('late', 'అవును');
+  await call.runTools([tool('record_dose', { medicine_id: 'a', status: 'taken' })], false);
+  assert.equal(tools.length, 0);
+  assert.ok(sent.some(e => e.type === 'conversation.item.delete' && e.item_id === 'late'));
+
+  call.speechStarted();
+  call.utterances.set('fresh', call.current);
+  call.current = null;
+  call.decide('fresh', 'అవును అవును');
+  await call.runTools([
+    tool('record_dose', { medicine_id: 'b', status: 'taken' }, 'wrong'),
+    tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'right'),
+    tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'duplicate'),
+  ], false);
+  assert.deepEqual(tools.map(entry => entry.args.medicine_id), ['a']);
+  call.hangUp();
 });

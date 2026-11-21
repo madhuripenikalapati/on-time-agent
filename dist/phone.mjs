@@ -19,6 +19,30 @@ export function mountPhone(root, id, { stage = false } = {}) {
   let data = null;
   let screen = 'locked';
   let microphone = null;
+  const replayAudio = stage && new URLSearchParams(location.search).get('debug') === 'audio';
+  let replayInput;
+  let replaySource;
+  const replayPicker = replayAudio ? h('input', { type: 'file', accept: 'audio/*', 'aria-label': 'Replay Telugu test audio',
+    onchange: async () => {
+      const file = replayPicker.files[0];
+      replayPicker.value = '';
+      if (!file || screen !== 'call') return;
+      try {
+        const buffer = await audioContext.decodeAudioData(await file.arrayBuffer());
+        replaySource?.stop();
+        await audioContext.resume();
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(replayInput);
+        source.onended = () => { if (replaySource === source) replaySource = null; };
+        replaySource = source;
+        source.start();
+      } catch (e) {
+        error = 'Could not replay audio: ' + e.message;
+        render();
+      }
+    },
+  }) : null;
   let audioContext = null;
   let ringer = null;
   let voice = null;
@@ -116,6 +140,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
         h('div', { class: 'soft small te' }, agentState === 'listening' || agentState === 'ducked' ? T.listening : T.speaking)),
       pack && pack.id !== handoffAlert()?.medicineId ? packView() : null,
       handoffView(),
+      replayPicker,
       h('div', { class: 'caption te', 'aria-live': 'polite' }, caption || '…', heard ? h('span', { class: 'you' }, '🗣 ' + heard) : null),
       error ? h('div', { class: 'error-banner' }, error) : null,
       h('div', { class: 'call-foot' }, h('button', { class: 'round hangup', 'aria-label': 'Hang up', onclick: () => voice?.hangUp('hung-up') }, icon('phone'))),
@@ -232,7 +257,10 @@ export function mountPhone(root, id, { stage = false } = {}) {
     try {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
       await audioContext.resume();
-      microphone = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (replayAudio) {
+        replayInput = audioContext.createMediaStreamDestination();
+        microphone = replayInput.stream;
+      } else microphone = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       screen = 'idle';
       clockTimer ??= setInterval(() => { if (screen === 'idle') render(); }, 15000);
     } catch (e) {
@@ -341,7 +369,9 @@ export function mountPhone(root, id, { stage = false } = {}) {
       data = started.household;
       const lang = languageOf(data.patient?.language);
       const farewell = { language: lang.name, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
-      voice = new VoiceCall({ secret: started.secret.value, microphone, mode, onTool, onUpdate, farewell });
+      const doseQuestions = started.medicines.flatMap(m => [...new Set([m.nickname, m.name].filter(Boolean))]
+        .map(name => ({ medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name }) })));
+      voice = new VoiceCall({ secret: started.secret.value, microphone, mode, onTool, onUpdate, farewell, doseQuestions });
       await voice.connect();
       startedAt = Date.now();
       screen = 'call';
