@@ -90,6 +90,9 @@ Run `node --test test/*.test.mjs` (43 tests). Open `/` and choose **Try the demo
 
 ## Deploy (AWS)
 
+**Automatic:** every push to `main` runs the tests and deploys (`.github/workflows/deploy.yml`), using the repository secrets `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` of a deploy-only IAM user. **By hand:** `./scripts/deploy.sh` does the same from any machine with AWS credentials and checks the live site afterwards.
+
+
 The stack is API Gateway (HTTP API), one Node 22 Lambda, DynamoDB for households, and Secrets Manager for the OpenAI key. The browser connects straight to OpenAI with a 10-minute client secret, so call audio never passes through the Lambda.
 
 ```sh
