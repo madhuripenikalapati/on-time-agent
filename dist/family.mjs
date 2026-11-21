@@ -372,7 +372,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
           h('b', {}, '✨ AI filled in ' + unique.length + ' medicine' + (unique.length > 1 ? 's' : '') + ' from ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '. '),
           unsure ? unsure + (unsure === 1 ? ' is' : ' are') + ' marked “AI wasn’t sure”: check those first. ' : '',
           'Now compare every medicine below with the prescription, correct anything wrong, and save.',
-          remarks.length ? h('div', { class: 'small', style: 'margin-top:6px' }, 'AI noted: ' + remarks.join(' ')) : null));
+          remarks.length ? h('div', { class: 'small remarks' }, 'AI noted: ' + remarks.join(' ')) : null));
         compare.replaceChildren(h('span', { class: 'muted small' }, 'Your prescription (tap to enlarge):'),
           ...chosen.filter(f => f.type !== 'application/pdf').map(f => { const url = URL.createObjectURL(f); return h('a', { href: url, target: '_blank', rel: 'noopener' }, h('img', { src: url, alt: 'Prescription page' })); }));
       } catch (error) {

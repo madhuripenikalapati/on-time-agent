@@ -1,0 +1,18 @@
+body { margin: 0; font: 16px/1.5 system-ui, -apple-system, sans-serif; background: #f6f3ec; color: #1d2a24; }
+main { max-width: 720px; margin: 0 auto; padding: 20px 16px 48px; }
+h1 { font-size: 1.5rem; margin: 0 0 6px; }
+h2 { font-size: 1.1rem; margin: 28px 0 8px; }
+p, li { color: #4a564f; }
+ol { padding-left: 20px; }
+.note { background: #fdf0d8; color: #5a3600; padding: 10px 12px; border-radius: 10px; font-size: .92rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+figure { margin: 0; background: #fff; border-radius: 12px; padding: 8px; border: 1px solid #e4ddcf; }
+figure img { width: 100%; border-radius: 8px; display: block; }
+figcaption { font-size: .85rem; margin-top: 6px; }
+.rx img { width: 100%; border-radius: 12px; border: 1px solid #e4ddcf; display: block; }
+@media (prefers-color-scheme: dark) {
+  body { background: #121815; color: #e8ece9; }
+  p, li { color: #b8c2bc; }
+  figure { background: #1c2420; border-color: #2c3732; }
+  .note { background: #3a2a0c; color: #f5dca8; }
+}

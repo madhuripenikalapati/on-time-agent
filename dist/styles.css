@@ -326,3 +326,4 @@ h1, h2, h3, p { margin: 0; }
 .compare img { height: 120px; border-radius: 10px; border: 1px solid var(--line); cursor: zoom-in; }
 .med.doubt { border: 2px solid #e0a100; background: #fffdf6; }
 .doubt-banner { grid-column: 1 / -1; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: #5a3600; font-size: .92rem; }
+.notice .remarks { margin-top: 6px; }
