@@ -39,6 +39,22 @@ test('a reported dose is saved for today and the call stops asking about it', ()
   assert.deepEqual(dueMedicines(doc, 'morning', morning).map(m => m.name), ['Glycomet 500']);
 });
 
+test('a dose taken twice the same day comes off the strip once; a correction puts it back', () => {
+  const doc = household();
+  const [telma] = doc.medicines;
+  const first = startCall(doc, { slot: 'morning' }, morning);
+  callEvent(doc, first.id, { type: 'dose', medicineId: telma.id, status: 'taken' }, morning);
+  callEvent(doc, first.id, { type: 'dose', medicineId: telma.id, status: 'taken' }, morning);
+  assert.equal(telma.stock, 13, 'recorded twice in one call');
+  const followUp = startCall(doc, { slot: 'morning' }, morning + 60_000);
+  callEvent(doc, followUp.id, { type: 'dose', medicineId: telma.id, status: 'taken' }, morning + 60_000);
+  assert.equal(telma.stock, 13, 'recorded again on a follow-up call');
+  callEvent(doc, followUp.id, { type: 'dose', medicineId: telma.id, status: 'not_taken' }, morning + 60_000);
+  assert.equal(telma.stock, 14, 'corrected to not taken: the tablet goes back');
+  callEvent(doc, followUp.id, { type: 'dose', medicineId: telma.id, status: 'taken' }, morning + 60_000);
+  assert.equal(telma.stock, 13);
+});
+
 test('a follow-up becomes a ringing call when the demo clock advances', () => {
   const doc = household();
   const call = startCall(doc, { slot: 'morning' }, morning);
