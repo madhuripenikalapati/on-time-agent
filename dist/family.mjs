@@ -77,6 +77,23 @@ export function mountFamily(root, id, { stage = false } = {}) {
     else if (!editor) body.replaceChildren(medicines());
   }
 
+  function packFollowUp(alert, acknowledged = 'Caregiver following up · dose unconfirmed') {
+    return alert.acknowledgedAt
+      ? h('span', { class: 'pill', role: 'status' }, acknowledged)
+      : h('button', { class: 'btn small', onclick: () => act(() => api.acknowledge(id, alert.id), 'Follow-up acknowledged') }, 'I’ll follow up');
+  }
+
+  function stageHandoff(alert, medicine) {
+    const [label, kind] = statusPill.unsure;
+    return h('section', { class: 'card stage-handoff', 'aria-label': 'Pack mismatch handoff' },
+      medicine.photo ? h('img', { src: medicine.photo, alt: 'Saved photo of the ' + medicine.name + ' pack' })
+        : h('div', { class: 'stage-handoff-placeholder' }, 'No pack photo saved'),
+      h('div', { class: 'stage-handoff-details' },
+        h('h2', {}, 'Needs help checking the pack'),
+        h('strong', {}, [medicine.name, medicine.strength].filter(Boolean).join(' ')),
+        h('div', { class: 'row' }, h('span', { class: 'pill ' + kind }, label), packFollowUp(alert, 'Caregiver following up'))));
+  }
+
   // ---------- Today ----------
   function today() {
     const name = data.patient.name;
@@ -86,6 +103,10 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const taken = scheduled.filter(m => doses[m.id]?.status === 'taken').length;
     const call = data.calls[0];
     const openAlerts = data.alerts.filter(a => !a.resolved);
+    const featured = stage && openAlerts.find(a => a.kind === 'pack_mismatch'
+      && doses[a.medicineId]?.status === 'unsure' && doses[a.medicineId]?.callId === a.callId);
+    const featuredMedicine = featured && data.medicines.find(m => m.id === featured.medicineId);
+    const otherAlerts = featuredMedicine ? openAlerts.filter(a => a.id !== featured.id) : openAlerts;
 
     let headline;
     if (live()) headline = 'On a call with ' + name + ' right now';
@@ -120,18 +141,16 @@ export function mountFamily(root, id, { stage = false } = {}) {
 
     const left = [hero];
     if (live() || (call && call.status === 'live')) left.push(liveCard(call));
-    if (openAlerts.length) left.push(h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', {}, 'Needs your attention'), h('span', { class: 'pill bad' }, openAlerts.length)),
-      openAlerts.map(alert => {
+    if (otherAlerts.length) left.push(h('section', { class: 'card' },
+      h('div', { class: 'card-head' }, h('h2', {}, 'Needs your attention'), h('span', { class: 'pill bad' }, otherAlerts.length)),
+      otherAlerts.map(alert => {
         const [emoji, title] = alertCopy[alert.kind] ?? alertCopy.other;
         const med = data.medicines.find(m => m.id === alert.medicineId);
         return h('div', { class: 'alert ' + alert.kind },
           h('span', { class: 'icon' }, emoji),
           h('div', {}, h('strong', {}, title + (med ? ' · ' + med.name : '')), h('span', {}, alert.note), h('div', { class: 'small' }, ago(alert.at, data.serverTime))),
           alert.kind === 'pack_mismatch'
-            ? alert.acknowledgedAt
-              ? h('span', { class: 'pill' }, 'Caregiver following up · dose unconfirmed')
-              : h('button', { class: 'btn small', onclick: () => act(() => api.acknowledge(id, alert.id), 'Follow-up acknowledged') }, 'I’ll follow up')
+            ? packFollowUp(alert)
             : h('button', { class: 'btn small', onclick: () => act(() => api.resolve(id, alert.id), 'Marked as handled') }, 'Handled'),
         );
       })));
@@ -172,7 +191,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
       copyRow('Family view', familyUrl()),
       copyRow(name + '’s phone', phoneUrl()),
     ));
-    return h('div', { class: 'grid' }, h('div', { class: 'stack' }, left), h('div', { class: 'stack' }, right));
+    const dashboard = h('div', { class: 'grid' }, h('div', { class: 'stack' }, left), h('div', { class: 'stack' }, right));
+    return featuredMedicine ? h('div', { class: 'stack' }, stageHandoff(featured, featuredMedicine), dashboard) : dashboard;
   }
 
   function liveCard(call) {
