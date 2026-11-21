@@ -277,3 +277,6 @@ h1, h2, h3, p { margin: 0; }
 .field.suggested input { border-color: #8b7ff0; background: #f5f3ff; }
 .field.suggested { color: #5b4bc4; }
 .phone .next-name { font-size: 1.5rem; letter-spacing: -.02em; }
+
+.page { position: relative; }
+.remove-page { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; border: 0; background: var(--ink); color: #fff; cursor: pointer; font-size: 15px; line-height: 1; }

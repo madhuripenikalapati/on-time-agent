@@ -17,6 +17,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
   let data = null;
   let tab = ['today', 'medicines', 'calls'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'today';
   let editor = null; // draft of the medicine plan while editing
+  let suggestNamesFor = () => {}; // set while the medicines editor is open
   let busy = false;
 
   const tabs = Object.fromEntries(['today', 'medicines', 'calls'].map(name => [name,
@@ -133,7 +134,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         const [label, kind] = dose ? statusPill[dose.status] : ['Not asked yet', ''];
         return h('div', { class: 'dose' },
           h('span', { class: 'when', title: slotLabel[slotOf(m)] }, slotEmoji[slotOf(m)]),
-          h('div', {}, h('strong', {}, (m.nickname ? m.nickname + ' · ' : '') + m.name + (m.strength ? ' ' + m.strength : '')), h('span', { class: 'detail' }, [m.amount, whenText(m)].filter(Boolean).join(' · '))),
+          h('div', {}, h('strong', {}, (m.nickname ? m.nickname + ' · ' : '') + m.name + (m.strength ? ' ' + m.strength : '')), h('span', { class: 'detail' }, [m.amount, whenText(m), m.use].filter(Boolean).join(' · '))),
           h('div', { class: 'row' }, h('span', { class: 'pill ' + kind }, label + (dose ? ' · ' + time(dose.at) : ''))));
       })) : h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => select('medicines') }, 'Add medicines')),
     ));
@@ -235,42 +236,104 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const fileInput = h('input', { type: 'file', multiple: true, accept: 'image/png,image/jpeg,image/webp,application/pdf', onchange: () => choose(Array.from(fileInput.files)) });
     const readButton = h('button', { class: 'btn primary', disabled: true, onclick: read }, icon('sparkle'), 'Read prescription with AI');
     const drop = h('label', { class: 'dropzone' }, fileInput,
-      h('strong', {}, 'Upload prescription photos or a PDF'),
-      h('span', { class: 'muted small' }, 'Up to 3 pages · printed or handwritten · we’ll draft the medicines for you to check'));
+      h('strong', {}, 'Upload prescription photos or PDFs'),
+      h('span', { class: 'muted small' }, 'As many pages as you have · printed or handwritten · AI drafts every medicine for you to check'));
     drop.addEventListener('dragover', event => { event.preventDefault(); drop.classList.add('over'); });
     drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-    drop.addEventListener('drop', event => { event.preventDefault(); drop.classList.remove('over'); choose(Array.from(event.dataTransfer.files)); });
+    drop.addEventListener('drop', event => { event.preventDefault(); drop.classList.remove('over'); choose([...chosen, ...Array.from(event.dataTransfer.files)]); });
 
     function choose(files) {
-      chosen = files.filter(f => ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(f.type)).slice(0, 3);
-      pages.replaceChildren(...chosen.map(f => f.type === 'application/pdf' ? h('div', { class: 'pdf' }, 'PDF') : h('img', { src: URL.createObjectURL(f), alt: f.name })));
+      chosen = files.filter(f => ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'].includes(f.type));
+      pages.replaceChildren(...chosen.map((f, i) => h('div', { class: 'page' },
+        f.type === 'application/pdf' ? h('div', { class: 'pdf' }, 'PDF') : h('img', { src: URL.createObjectURL(f), alt: f.name }),
+        h('button', { class: 'remove-page', 'aria-label': 'Remove page', onclick: event => { event.preventDefault(); choose(chosen.filter((_, j) => j !== i)); } }, '×'))));
       readButton.disabled = !chosen.length;
-      const total = chosen.reduce((sum, f) => sum + f.size, 0);
-      status.replaceChildren(total > 2_300_000 ? h('p', { class: 'notice warn' }, 'These files are too large together. Use smaller photos (under 2.3 MB total).') : '');
+      readButton.replaceChildren(icon('sparkle'), chosen.length > 1 ? 'Read ' + chosen.length + ' pages with AI' : 'Read prescription with AI');
+      const bigPdf = chosen.find(f => f.type === 'application/pdf' && f.size > 3_500_000);
+      status.replaceChildren(bigPdf ? h('p', { class: 'notice warn' }, bigPdf.name + ' is larger than 3.5 MB. Split it, or upload photos of its pages instead.') : '');
+    }
+
+    // Photos are shrunk in the browser, then pages are read in batches of up to four.
+    async function preparePages() {
+      return Promise.all(chosen.map(async f => f.type === 'application/pdf'
+        ? { type: f.type, data: await fileToBase64(f) }
+        : { type: 'image/jpeg', data: (await shrinkImage(f, 1800, 0.85)).split(',')[1] }));
+    }
+    function batches(prepared) {
+      const groups = [];
+      let current = [];
+      let size = 0;
+      for (const page of prepared) {
+        const bytes = page.data.length * 0.75;
+        if (current.length && (current.length === 4 || size + bytes > 3_000_000)) { groups.push(current); current = []; size = 0; }
+        current.push(page);
+        size += bytes;
+      }
+      if (current.length) groups.push(current);
+      return groups;
     }
 
     async function read() {
       readButton.disabled = true;
-      readButton.replaceChildren(icon('sparkle'), 'Reading…');
-      status.replaceChildren(h('p', { class: 'notice' }, 'Reading the prescription. This takes about 10–20 seconds.'));
+      const progress = text => { readButton.replaceChildren(icon('sparkle'), text); status.replaceChildren(h('p', { class: 'notice' }, text)); };
       try {
-        const files = await Promise.all(chosen.map(async f => ({ type: f.type, data: await fileToBase64(f) })));
-        const draft = await api.prescription(files);
-        if (!draft.medicines.length) throw new Error('No medicines could be read. Add them by hand below.');
-        editor.medicines = draft.medicines.map(row => ({
-          name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '', nickname: row.nickname ?? '', aiNickname: Boolean(row.nickname),
+        if (chosen.some(f => f.type === 'application/pdf' && f.size > 3_500_000)) throw new Error('Split large PDFs, or upload photos of their pages.');
+        progress('Preparing ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '…');
+        const groups = batches(await preparePages());
+        const rows = [];
+        const notes = [];
+        let done = 0;
+        for (const group of groups) {
+          progress('Reading pages ' + (done + 1) + (group.length > 1 ? '–' + (done + group.length) : '') + ' of ' + chosen.length + '…');
+          const draft = await api.prescription(group);
+          rows.push(...draft.medicines);
+          if (draft.notes) notes.push(draft.notes);
+          done += group.length;
+        }
+        // The same medicine and timing on two pages is one row.
+        const seen = new Set();
+        const unique = rows.filter(row => {
+          // "Glycomet", "Tab. Glycomet 500 mg" and "GLYCOMET 500" are the same medicine.
+          const base = String(row.name ?? '').toLowerCase().replace(/\btab(let)?s?\b\.?|\bcap(sule)?s?\b\.?/g, '').replace(/\d+(\.\d+)?\s*(mg|mcg|g|iu|k|ml)?\b/g, '').replace(/[^a-z]/g, '');
+          const key = [base, row.meal, row.timing, row.days].map(v => String(v ?? '').toLowerCase()).join('|');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 20);
+        if (!unique.length) throw new Error('No medicines could be read. Add them by hand below.');
+        editor.medicines = unique.map(row => ({
+          name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '',
+          nickname: row.nickname ?? '', use: row.use ?? '', aiNickname: Boolean(row.nickname || row.use),
           meal: row.meal ?? '', timing: row.timing ?? '', time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '',
         }));
         reviewed.checked = false;
         drawList();
-        status.replaceChildren(h('p', { class: 'notice' }, '✨ Drafted ' + draft.medicines.length + ' medicine' + (draft.medicines.length > 1 ? 's' : '') + '. Check every highlighted field against the prescription, then save.' + (draft.notes ? ' Note: ' + draft.notes : '')));
+        await suggestNames(editor.medicines.filter(m => !m.nickname || !m.use));
+        status.replaceChildren(h('p', { class: 'notice' }, '✨ Drafted ' + unique.length + ' medicine' + (unique.length > 1 ? 's' : '') + ' from ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '. Check every highlighted field against the prescription, then save.' + (notes.length ? ' Note: ' + notes.join(' ') : '')));
       } catch (error) {
         status.replaceChildren(h('p', { class: 'notice bad' }, error.message));
       } finally {
         readButton.disabled = !chosen.length;
-        readButton.replaceChildren(icon('sparkle'), 'Read prescription with AI');
+        readButton.replaceChildren(icon('sparkle'), chosen.length > 1 ? 'Read ' + chosen.length + ' pages with AI' : 'Read prescription with AI');
       }
     }
+
+    // Ask AI what each medicine is for and suggest the name Amma knows it by.
+    async function suggestNames(meds) {
+      const named = meds.filter(m => m.name?.trim());
+      if (!named.length) return;
+      try {
+        const { medicines: info } = await api.medicineInfo(named.map(m => m.name.trim()));
+        named.forEach((m, i) => {
+          const found = info.find(row => row.name?.trim().toLowerCase() === m.name.trim().toLowerCase()) ?? info[i];
+          if (!found) return;
+          if (found.nickname && (!m.nickname || m.aiNickname)) { m.nickname = found.nickname; m.aiNickname = true; }
+          if (found.use && (!m.use || m.aiNickname)) m.use = found.use;
+        });
+        drawList();
+      } catch { /* suggestions are optional */ }
+    }
+    suggestNamesFor = suggestNames;
 
     const field = (label, input, cls = '') => h('label', { class: 'field ' + cls }, label, input);
     const patientName = h('input', { value: editor.patient.name, maxlength: 40 });
@@ -301,6 +364,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
     } }, 'Save plan');
 
     drawList();
+    const missingNames = editor.medicines.filter(m => !m.nickname || !m.use);
+    if (missingNames.length) suggestNames(missingNames);
     const names = ['BP tablet', 'Sugar tablet', 'Cholesterol tablet', 'Thyroid tablet', 'Heart tablet', 'Kidney tablet', 'B12 tablet', 'Vitamin D tablet', 'Calcium tablet', 'Iron tablet', 'Gas tablet', 'Pain tablet', 'Sleep tablet', 'Blood thinner', 'Antibiotic'];
     return h('div', {},
       h('datalist', { id: 'nicknames' }, names.map(value => h('option', { value }))),
@@ -336,7 +401,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
           m.photo ? h('img', { src: m.photo, alt: 'Pack photo' }) : h('span', { class: 'add' }, icon('camera'), h('br'), 'Add pack photo')),
         m.photo ? h('button', { class: 'btn small ghost', onclick: () => { m.photo = ''; redraw(); } }, 'Remove photo') : null),
       h('div', { class: 'fields' },
-        f('Medicine (as written)', input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60 }), 'name', 'wide'),
+        f('Medicine (as written)', input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: () => { if (!m.nickname || m.aiNickname) suggestNamesFor([m]); } }), 'name', 'wide'),
         f(m.aiNickname ? 'Simple name · AI suggested, please check' : 'Simple name (what Amma calls it)', input('nickname', { placeholder: 'e.g. Sugar tablet', maxlength: 40, list: 'nicknames', oninput: event => { m.nickname = event.target.value; m.aiNickname = false; } }), 'nickname', 'wide' + (m.aiNickname ? ' suggested' : '')),
         f('Strength', input('strength', { placeholder: '40 mg', maxlength: 40 }), 'strength'),
         f('Dose', input('amount', { placeholder: '1 tablet', maxlength: 40 }), 'amount'),
@@ -346,6 +411,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         f('Days', select('days', DAY_OPTIONS), 'days'),
         f('Tablets left', input('stock', { type: 'number', min: 0, step: 0.5, placeholder: 'count' })),
         h('div', { class: 'field' }, ' ', h('button', { class: 'btn small danger', onclick: () => { editor.medicines.splice(index, 1); redraw(); } }, 'Remove')),
+        f(m.aiNickname ? 'Used for · AI suggested' : 'Used for', input('use', { placeholder: 'e.g. Blood sugar (diabetes)', maxlength: 80 }), null, 'wide' + (m.aiNickname ? ' suggested' : '')),
         m.source ? h('div', { class: 'source' }, 'Read from prescription: “' + m.source + '”') : null,
       ),
     );

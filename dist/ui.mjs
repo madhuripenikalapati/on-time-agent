@@ -101,6 +101,7 @@ export const api = {
   startCall: (id, body) => call('POST', '/api/h/' + id + '/calls', body),
   events: (id, callId, events) => call('POST', '/api/h/' + id + '/calls/' + callId + '/events', { events }),
   prescription: files => call('POST', '/api/prescription', { files }),
+  medicineInfo: names => call('POST', '/api/medicine-info', { names }),
 };
 
 // Polls a household and calls onData with each fresh copy.
