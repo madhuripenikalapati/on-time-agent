@@ -15,7 +15,7 @@ const alertCopy = {
 
 export function mountFamily(root, id, { stage = false } = {}) {
   let data = null;
-  let tab = ['today', 'medicines', 'calls'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'today';
+  let tab = ['today', 'medicines', 'calls', 'welcome'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'today';
   let editor = null; // draft of the medicine plan while editing
   let suggestNamesFor = () => {}; // set while the medicines editor is open
   let busy = false;
@@ -66,7 +66,11 @@ export function mountFamily(root, id, { stage = false } = {}) {
     if (!data) return;
     for (const [name, el] of Object.entries(tabs)) el.setAttribute('aria-selected', String(name === tab));
     const name = data.patient.name;
-    who.replaceChildren(h('span', { class: 'name' }, (data.patient.caregiverName ? data.patient.caregiverName + ' · caring for ' : 'Caring for ') + name), h('span', { class: 'avatar' }, name[0]));
+    const main = data.caregivers?.find(c => c.primary);
+    who.replaceChildren(h('span', { class: 'name' }, (main ? main.name + ' (' + relationLabel[main.relation] + ') · caring for ' : data.patient.caregiverName ? data.patient.caregiverName + ' · caring for ' : 'Caring for ') + name), h('span', { class: 'avatar' }, name[0]));
+    // A new family starts with onboarding.
+    if (!data.onboarded && !data.medicines.length && tab !== 'welcome') tab = 'welcome';
+    if (tab === 'welcome') { if (!body.querySelector('.welcome')) body.replaceChildren(welcome()); return; }
     if (tab === 'today') body.replaceChildren(today());
     else if (tab === 'calls') body.replaceChildren(calls());
     else if (!editor) body.replaceChildren(medicines());
@@ -345,9 +349,88 @@ export function mountFamily(root, id, { stage = false } = {}) {
     }
     suggestNamesFor = suggestNames;
 
+    // ---- Scan the medicine packs at home: match each photo, count tablets left ----
+    let packFiles = [];
+    const packThumbs = h('div', { class: 'pages' });
+    const packStatus = h('div', { 'aria-live': 'polite' });
+    const packInput = h('input', { type: 'file', multiple: true, accept: 'image/*', onchange: () => choosePacks(Array.from(packInput.files)) });
+    const scanButton = h('button', { class: 'btn primary', disabled: true, onclick: scanPacks }, icon('sparkle'), 'Scan packs with AI');
+    const packDrop = h('label', { class: 'dropzone' }, packInput,
+      h('strong', {}, '📸 Photograph every medicine strip or box'),
+      h('span', { class: 'muted small' }, 'AI matches each one to the plan, counts the tablets left, and saves the photo so ' + data.patient.name + ' sees her own strip on the call'));
+    function choosePacks(files) {
+      packFiles = files.filter(f => /^image\//.test(f.type));
+      packThumbs.replaceChildren(...packFiles.map(f => h('img', { src: URL.createObjectURL(f), alt: f.name })));
+      scanButton.disabled = !packFiles.length;
+      scanButton.replaceChildren(icon('sparkle'), packFiles.length > 1 ? 'Scan ' + packFiles.length + ' packs with AI' : 'Scan pack with AI');
+      packStatus.replaceChildren();
+    }
+    const packKey = m => (m.name + '|' + (m.strength || '')).toLowerCase();
+    async function scanPacks() {
+      const meds = editor.medicines.map(m => ({ name: m.name, strength: m.strength, nickname: m.nickname }));
+      if (!meds.some(m => m.name?.trim())) { packStatus.replaceChildren(h('p', { class: 'notice warn' }, 'Add the medicines first: upload the prescription above.')); return; }
+      scanButton.disabled = true;
+      const results = [];
+      try {
+        for (let start = 0; start < packFiles.length; start += 4) {
+          const group = packFiles.slice(start, start + 4);
+          packStatus.replaceChildren(h('p', { class: 'notice' }, 'Reading packs ' + (start + 1) + (group.length > 1 ? '–' + (start + group.length) : '') + ' of ' + packFiles.length + '…'));
+          const photos = await Promise.all(group.map(async f => ({ type: 'image/jpeg', data: (await shrinkImage(f, 1600, 0.85)).split(',')[1] })));
+          const { packs } = await api.scanPacks(id, photos, meds);
+          results.push(...packs.map(p => ({ ...p, file: group[p.photo - 1], index: p.medicine_id ? Number(p.medicine_id.slice(1)) : -1 })));
+        }
+        // Photos AI could not read still get a row, so nothing silently disappears.
+        for (const file of packFiles) if (!results.some(r => r.file === file)) results.push({ file, index: -1, tablets_left: null, confidence: 'low', note: 'Could not read this label' });
+        showReview(results);
+      } catch (error) {
+        packStatus.replaceChildren(h('p', { class: 'notice bad' }, error.message));
+      } finally {
+        scanButton.disabled = !packFiles.length;
+      }
+    }
+    function showReview(results) {
+      // One option per medicine (rows for the same strip at different meals share it).
+      const firstIndex = new Map();
+      editor.medicines.forEach((m, i) => { if (m.name && !firstIndex.has(packKey(m))) firstIndex.set(packKey(m), i); });
+      const options = [['-1', 'Not in the plan'], ...[...firstIndex.values()].map(i => {
+        const m = editor.medicines[i];
+        return [String(i), (m.nickname ? m.nickname + ' · ' : '') + m.name + (m.strength ? ' ' + m.strength : '')];
+      })];
+      for (const r of results) if (r.index >= 0 && editor.medicines[r.index]) r.index = firstIndex.get(packKey(editor.medicines[r.index])) ?? -1;
+      const rows = results.map(r => {
+        const select = h('select', { onchange: e => { r.index = Number(e.target.value); } }, options.map(([value, label]) => h('option', { value, selected: Number(value) === r.index }, label)));
+        const count = h('input', { type: 'number', min: 0, max: 500, value: r.tablets_left ?? '', placeholder: 'count', oninput: e => { r.tablets_left = e.target.value === '' ? null : Number(e.target.value); r.edited = true; } });
+        return h('div', { class: 'pack-row' },
+          h('img', { src: URL.createObjectURL(r.file), alt: 'Pack photo' }),
+          h('div', { class: 'pack-fields' },
+            h('label', { class: 'field' }, 'Matches', select),
+            h('label', { class: 'field' }, 'Tablets left (AI estimate)', count),
+            h('div', { class: 'small muted' }, h('span', { class: 'pill ' + ({ high: 'good', medium: 'info', low: 'warn' }[r.confidence] ?? '') }, r.confidence + ' confidence'), ' ', [r.label_name, r.label_strength].filter(Boolean).join(' '), r.note ? ' · ' + r.note : '')));
+      });
+      const apply = h('button', { class: 'btn primary', onclick: async () => {
+        apply.disabled = true;
+        const byPack = new Map();
+        for (const r of results.filter(r => r.index >= 0)) {
+          const key = packKey(editor.medicines[r.index]);
+          const entry = byPack.get(key) ?? { file: r.file, count: null, edited: false };
+          entry.edited ||= Boolean(r.edited);
+          if (r.tablets_left !== null && r.tablets_left !== undefined) entry.count = (entry.count ?? 0) + r.tablets_left;
+          byPack.set(key, entry);
+        }
+        for (const [key, entry] of byPack) {
+          const photo = await shrinkImage(entry.file);
+          for (const m of editor.medicines.filter(m => packKey(m) === key)) {
+            m.photo = photo;
+            if (entry.count !== null) { m.stock = entry.count; m.aiStock = !entry.edited; }
+          }
+        }
+        drawList();
+        packStatus.replaceChildren(h('p', { class: 'notice' }, '✨ Added ' + byPack.size + ' pack photo' + (byPack.size === 1 ? '' : 's') + ' and tablet counts to the plan. Check the counts, then save.'));
+      } }, 'Apply to plan');
+      packStatus.replaceChildren(h('div', { class: 'pack-review' }, h('p', { class: 'hint' }, 'Check each match and count. Counts are AI estimates from the photo.'), rows, h('div', { class: 'row' }, apply)));
+    }
+
     const field = (label, input, cls = '') => h('label', { class: 'field ' + cls }, label, input);
-    const patientName = h('input', { value: editor.patient.name, maxlength: 40 });
-    const caregiverName = h('input', { value: editor.patient.caregiverName, maxlength: 40, placeholder: 'e.g. Ravi' });
     const followMinutes = h('input', { type: 'number', min: 1, max: 180, value: editor.settings.followUpMinutes });
     const allowFollow = h('input', { type: 'checkbox', checked: editor.settings.allowFollowUp });
     const autoCalls = h('input', { type: 'checkbox', checked: editor.settings.autoCalls !== false });
@@ -357,11 +440,10 @@ export function mountFamily(root, id, { stage = false } = {}) {
       if (!reviewed.checked) { toast('Tick “I checked this against the prescription” first.', 'bad'); return; }
       const missing = editor.medicines.find(m => !m.name || !m.meal || !m.timing || !m.days);
       if (missing) { toast('Fill the name, meal, timing and days for ' + (missing.name || 'every medicine') + '.', 'bad'); return; }
-      editor.patient = { ...editor.patient, name: patientName.value.trim() || 'Amma', caregiverName: caregiverName.value.trim() };
       editor.settings = { followUpMinutes: Number(followMinutes.value) || 30, allowFollowUp: allowFollow.checked, shareWithFamily: share.checked, autoCalls: autoCalls.checked };
       save.disabled = true;
       try {
-        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, ...m }) => m) });
+        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, ...m }) => m) });
         toast('Plan saved. On Time will use it on the next call.');
         editor = null;
         tab = 'today';
@@ -383,10 +465,14 @@ export function mountFamily(root, id, { stage = false } = {}) {
       h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Medicines'), h('p', {}, 'Upload the prescription, check what AI drafted, and add a photo of each pack so ' + data.patient.name + ' can match it on the call.'))),
       h('div', { class: 'stack' },
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Prescription')), drop, pages, h('div', { class: 'row' }, readButton), status),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine packs at home'), h('p', { class: 'hint' }, 'Optional, but it makes the “ఈ tablet?” moment work with her own strips.'))), packDrop, packThumbs, h('div', { class: 'row' }, scanButton), packStatus),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine plan'), h('p', { class: 'hint' }, 'Highlighted fields were unclear or missing. The simple name is what On Time says on the call (“Sugar tablet”), so Amma doesn’t need to read brand names.'))), list),
         h('section', { class: 'card' }, h('h2', {}, 'Calls'), h('p', { class: 'hint' }, 'How On Time talks to ' + data.patient.name + '.'),
           h('div', { class: 'settings' },
-            field('Patient’s name', patientName), field('Your name (shown to the agent)', caregiverName), field('Call back after (minutes)', followMinutes)),
+            h('div', { class: 'field wide' }, 'Family', h('div', { class: 'family-line' },
+              (data.patient.callName || data.patient.name + ' గారు') + ' · ' + (data.caregivers?.length ? data.caregivers.map(c => c.name + ' (' + relationLabel[c.relation] + (c.primary ? ', main contact' : '') + ')').join(', ') : 'no family added'),
+              ' ', h('button', { class: 'btn small', onclick: () => select('welcome') }, 'Edit family'))),
+            field('Call back after (minutes)', followMinutes)),
           h('div', { class: 'stack' },
             h('label', { class: 'check' }, autoCalls, 'Call automatically at each medicine time'),
             h('label', { class: 'check' }, allowFollow, 'Allow a follow-up call if a dose isn’t taken yet'),
@@ -394,6 +480,74 @@ export function mountFamily(root, id, { stage = false } = {}) {
         h('div', { class: 'savebar' }, h('label', { class: 'check' }, reviewed, 'I checked this against the prescription'), save),
       ),
     );
+  }
+
+  // ---------- Welcome (onboarding) ----------
+  function welcome() {
+    const state = {
+      setupBy: data.setupBy || 'family',
+      name: data.onboarded ? data.patient.name : '',
+      callName: data.patient.callName || '',
+      people: structuredClone(data.caregivers?.length ? data.caregivers : [{ name: '', relation: 'son', primary: true }]),
+    };
+    const root = h('div', { class: 'welcome' });
+    const draw = () => {
+      const patient = state.name.trim() || 'them';
+      const roles = [
+        ['family', '👨‍👩‍👧', 'I’m family', 'Son, daughter, spouse, grandchild…'],
+        ['caretaker', '🧑‍⚕️', 'I’m a caretaker', 'A nurse or helper who looks after them'],
+        ['self', '🙋', 'It’s for me', 'I take the medicines myself'],
+      ];
+      const nameInput = h('input', { value: state.name, placeholder: 'e.g. Lakshmi', maxlength: 40, oninput: e => { state.name = e.target.value; drawAddress(); } });
+      const address = h('div', { class: 'chips' });
+      const custom = h('input', { placeholder: 'Or type how you address them', maxlength: 40, value: state.callName, oninput: e => { state.callName = e.target.value; drawAddress(); } });
+      const drawAddress = () => {
+        const options = [(state.name.trim() || 'Name') + ' గారు', 'అమ్మ', 'నాన్న', 'అమ్మమ్మ', 'నాన్నమ్మ', 'తాతయ్య', 'అత్తయ్య', 'మామయ్య'];
+        const current = state.callName || options[0];
+        address.replaceChildren(...options.map((option, i) => h('button', { type: 'button', class: 'chip' + (current === option ? ' on' : ''), onclick: () => { state.callName = i === 0 ? '' : option; custom.value = state.callName; drawAddress(); } }, option)));
+      };
+      drawAddress();
+      const people = h('div', { class: 'people' }, state.people.map((person, i) => h('div', { class: 'person' },
+        h('input', { value: person.name, placeholder: i === 0 && state.setupBy !== 'self' ? 'Your name' : 'Name', maxlength: 40, oninput: e => { person.name = e.target.value; } }),
+        h('select', { onchange: e => { person.relation = e.target.value; } }, Object.entries(relationLabel).map(([value, label]) => h('option', { value, selected: person.relation === value }, label))),
+        h('label', { class: 'check' }, h('input', { type: 'radio', name: 'primary', checked: person.primary, onchange: () => { state.people.forEach(x => { x.primary = x === person; }); } }), 'Main contact'),
+        state.people.length > 1 || state.setupBy === 'self' ? h('button', { type: 'button', class: 'btn small ghost', onclick: () => { state.people.splice(i, 1); draw(); } }, 'Remove') : null)));
+      const finish = h('button', { class: 'btn primary', onclick: async () => {
+        finish.disabled = true;
+        try {
+          const caregivers = state.people.filter(p => p.name.trim());
+          data = await api.saveProfile(id, { setupBy: state.setupBy, patient: { name: state.name, callName: state.callName }, caregivers });
+          toast('Saved. Next: add ' + data.patient.name + '’s medicines.');
+          select(data.medicines.length ? 'today' : 'medicines');
+        } catch (error) {
+          toast(error.message, 'bad');
+        } finally {
+          finish.disabled = false;
+        }
+      } }, data.onboarded ? 'Save family' : 'Continue to medicines →');
+      root.replaceChildren(
+        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Family' : 'Welcome to On Time'), h('p', {}, 'Tell us who takes the medicines and who looks after them. On Time calls them in Telugu and keeps everyone here updated.'))),
+        h('div', { class: 'stack' },
+          h('section', { class: 'card' }, h('h2', {}, '1 · Who is setting this up?'),
+            h('div', { class: 'roles' }, roles.map(([value, emoji, title, hint]) => h('button', { type: 'button', class: 'role' + (state.setupBy === value ? ' on' : ''), onclick: () => {
+              state.setupBy = value;
+              if (value === 'self') state.people = state.people.filter(p => p.name.trim());
+              else if (!state.people.length) state.people.push({ name: '', relation: value === 'caretaker' ? 'caretaker' : 'son', primary: true });
+              else if (value === 'caretaker') state.people[0].relation = 'caretaker';
+              draw();
+            } }, h('span', { class: 'emoji' }, emoji), h('strong', {}, title), h('span', { class: 'muted small' }, hint))))),
+          h('section', { class: 'card' }, h('h2', {}, state.setupBy === 'self' ? '2 · About you' : '2 · Who takes the medicines?'),
+            h('div', { class: 'settings' }, h('label', { class: 'field' }, 'Their name', nameInput)),
+            h('p', { class: 'hint' }, 'How should On Time greet ' + patient + ' on the call?'), address, h('label', { class: 'field' }, custom)),
+          h('section', { class: 'card' }, h('h2', {}, state.setupBy === 'self' ? '3 · Family to keep updated (optional)' : '3 · Family and caretakers'),
+            h('p', { class: 'hint' }, 'The main contact is who On Time mentions on the call (“I’ll tell Ravi”) and who gets alerts first.'),
+            people,
+            h('button', { type: 'button', class: 'btn small', onclick: () => { state.people.push({ name: '', relation: 'daughter', primary: !state.people.length }); draw(); } }, icon('plus'), 'Add someone')),
+          h('div', { class: 'row' }, finish),
+        ));
+    };
+    draw();
+    return root;
   }
 
   function medCard(m, index, redraw) {
@@ -421,7 +575,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         f('Timing', select('timing', [['after', 'After meal'], ['before', 'Before meal'], ['fixed', 'Fixed time']]), 'timing'),
         f('Usual time', input('time', { type: 'time' })),
         f('Days', select('days', DAY_OPTIONS), 'days'),
-        f('Tablets left', input('stock', { type: 'number', min: 0, step: 0.5, placeholder: 'count' })),
+        f(m.aiStock ? 'Tablets left · AI counted' : 'Tablets left', input('stock', { type: 'number', min: 0, step: 0.5, placeholder: 'count' }), null, m.aiStock ? 'suggested' : ''),
         h('div', { class: 'field' }, ' ', h('button', { class: 'btn small danger', onclick: () => { editor.medicines.splice(index, 1); redraw(); } }, 'Remove')),
         f(m.aiNickname ? 'Used for · AI suggested' : 'Used for', input('use', { placeholder: 'e.g. Blood sugar (diabetes)', maxlength: 80 }), null, 'wide' + (m.aiNickname ? ' suggested' : '')),
         m.source ? h('div', { class: 'source' }, 'Read from prescription: “' + m.source + '”') : null,
@@ -431,6 +585,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
 
   return { stop: () => poller.stop(), refresh: () => poller.now() };
 }
+
+export const relationLabel = { son: 'Son', daughter: 'Daughter', spouse: 'Spouse', grandchild: 'Grandchild', sibling: 'Sibling', caretaker: 'Caretaker', other: 'Family' };
 
 export function turnChip(turn) {
   const verdict = { backchannel: 'kept talking', yield: 'stopped and listened', answer: 'answer', noise: 'ignored' }[turn.decision];

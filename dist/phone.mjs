@@ -7,7 +7,7 @@ import { turnChip } from './family.mjs';
 const T = {
   ready: 'ఫోన్ సిద్ధం చేయడానికి నొక్కండి',
   readyEn: 'Tap once so the phone can ring and hear you',
-  hello: name => 'నమస్కారం, ' + name + ' గారు',
+  hello: address => 'నమస్కారం, ' + address,
   idle: 'మందుల సమయానికి On Time కాల్ చేస్తుంది',
   next: 'తదుపరి మందు',
   calling: 'On Time కాల్ చేస్తోంది…',
@@ -71,7 +71,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
     if (screen === 'locked') {
       return [h('div', { class: 'center' },
         h('div', { class: 'orb' }, icon('logo')),
-        h('div', { class: 'greet te' }, T.hello(name)),
+        h('div', { class: 'greet te' }, T.hello(data?.patient?.callName || name + ' గారు')),
         h('button', { class: 'btn ready-btn te', onclick: () => unlock() }, T.ready),
         h('div', { class: 'soft small' }, T.readyEn),
         error ? h('div', { class: 'error-banner' }, error) : null)];
@@ -80,9 +80,9 @@ export function mountPhone(root, id, { stage = false } = {}) {
       const next = nextMedicine();
       return [h('div', { class: 'center' },
         h('div', { class: 'big-time' }, new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }).replace(/\s?[ap]m/i, '')),
-        h('div', { class: 'greet te' }, T.hello(name)),
+        h('div', { class: 'greet te' }, T.hello(data?.patient?.callName || name + ' గారు')),
         h('div', { class: 'soft te' }, T.idle),
-        next ? h('div', { class: 'next' }, h('span', { class: 'soft small te' }, T.next), h('strong', { class: 'next-name' }, next.name), h('span', { class: 'soft small' }, [next.brand, next.amount, next.when].filter(Boolean).join(' · '))) : null,
+        next ? h('div', { class: 'next' }, next.photo ? h('img', { class: 'next-photo', src: next.photo, alt: 'Photo of the ' + next.name + ' strip' }) : null, h('span', { class: 'soft small te' }, T.next), h('strong', { class: 'next-name' }, next.name), h('span', { class: 'soft small' }, [next.brand, next.amount, next.when].filter(Boolean).join(' · '))) : null,
         data?.followUp ? h('div', { class: 'soft small' }, 'Follow-up call at ' + time(data.followUp.at)) : null,
       ),
       stage ? null : setupCard()];
@@ -130,7 +130,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
     // The next one by time of day; earlier ones still open come after (they were missed).
     const now = order.indexOf(data.slot);
     const m = open.find(x => order.indexOf(slotOf(x)) >= now) ?? open[0];
-    return m ? { name: m.nickname || m.name, brand: m.nickname ? m.name : '', amount: m.amount, when: (m.timing === 'before' ? 'Before ' : m.timing === 'after' ? 'After ' : 'At ') + (m.timing === 'fixed' ? m.time : m.meal) } : null;
+    return m ? { photo: m.photo || '', name: m.nickname || m.name, brand: m.nickname ? m.name : '', amount: m.amount, when: (m.timing === 'before' ? 'Before ' : m.timing === 'after' ? 'After ' : 'At ') + (m.timing === 'fixed' ? m.time : m.meal) } : null;
   }
 
   let startedAt = 0;

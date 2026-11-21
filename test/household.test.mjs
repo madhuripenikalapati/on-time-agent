@@ -165,3 +165,28 @@ test('"1-0-1" in the dose field becomes a tablet count for that meal', async () 
   assert.equal(fixAmount({ amount: '0-2-0', meal: 'lunch' }).amount, '2 tablets');
   assert.equal(fixAmount({ amount: '1 tablet', meal: 'lunch' }).amount, '1 tablet');
 });
+
+test('onboarding saves who is who, and the agent greets them the way the family chose', async () => {
+  const { setProfile } = await import('../lib/household.mjs');
+  const doc = newHousehold(morning);
+  setProfile(doc, { setupBy: 'family', patient: { name: 'Kamala', callName: 'అమ్మ' }, caregivers: [
+    { name: 'Suresh', relation: 'son' }, { name: 'Priya', relation: 'daughter', primary: true },
+  ] });
+  assert.equal(doc.onboarded, true);
+  assert.equal(doc.patient.caregiverName, 'Priya');
+  assert.deepEqual(doc.caregivers.map(c => c.primary), [false, true]);
+  setPlan(doc, structuredClone({ medicines: demoPlan.medicines }));
+  assert.equal(doc.patient.callName, 'అమ్మ', 'saving medicines keeps the profile');
+  assert.equal(doc.caregivers.length, 2);
+  const agent = buildAgent(doc, startCall(doc, { slot: 'morning' }, morning));
+  assert.match(agent.instructions, /నమస్కారం అమ్మ\./);
+  assert.match(agent.instructions, /Priya గారికి/);
+});
+
+test('onboarding needs a patient name, and a family member unless it is for themselves', async () => {
+  const { setProfile } = await import('../lib/household.mjs');
+  assert.throws(() => setProfile(newHousehold(), { setupBy: 'family', patient: { name: '' }, caregivers: [] }), /name/);
+  assert.throws(() => setProfile(newHousehold(), { setupBy: 'family', patient: { name: 'Kamala' }, caregivers: [] }), /yourself/);
+  const self = setProfile(newHousehold(), { setupBy: 'self', patient: { name: 'Kamala' }, caregivers: [] });
+  assert.equal(self.patient.caregiverName, '');
+});

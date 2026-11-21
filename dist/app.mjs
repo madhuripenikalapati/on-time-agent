@@ -39,7 +39,7 @@ function landing() {
   const start = async demo => {
     try {
       const household = await api.create(demo);
-      location.href = '?h=' + household.id + (demo ? '&view=stage' : '#medicines');
+      location.href = '?h=' + household.id + (demo ? '&view=stage' : '#welcome');
     } catch (error) {
       toast(error.message, 'bad');
     }
