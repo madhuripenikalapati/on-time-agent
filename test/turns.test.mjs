@@ -50,3 +50,19 @@ test('captions drop stray scripts and repair doubled vowel signs', async () => {
   assert.equal(cleanText('Glycomet 500, ఒక tablet వేసుుకున్నారా?'), 'Glycomet 500, ఒక tablet వేసుకున్నారా?');
   assert.equal(cleanText('ఆగండి, ఈ tablet?'), 'ఆగండి, ఈ tablet?');
 });
+
+test('listening sounds and stop words work in every language', () => {
+  const backchannel = { hi: 'हाँ', ta: 'சரி', kn: 'ಹೌದು', ml: 'ശരി', mr: 'हो', bn: 'হ্যাঁ', gu: 'હા', en: 'okay' };
+  for (const [code, word] of Object.entries(backchannel)) assert.equal(decide(word, speaking), 'backchannel', code + ' ' + word);
+  const stop = { hi: 'रुकिए', ta: 'போதும்', kn: 'ಸಾಕು', ml: 'മതി', mr: 'थांबा', bn: 'থামুন', gu: 'બસ', en: 'stop' };
+  for (const [code, word] of Object.entries(stop)) assert.equal(decide(word, speaking), 'yield', code + ' ' + word);
+});
+
+test('a short misheard sound keeps the agent talking; corrections and "what?" still stop it', () => {
+  assert.equal(decide('సన్నీ', speaking), 'backchannel', '"సరే" misheard as "Sunny" in a real-audio test');
+  assert.equal(decide('hmmph', speaking), 'backchannel');
+  for (const word of ['కాదు', 'లేదు', 'नहीं', 'இல்ல', 'no']) assert.equal(decide(word, speaking), 'yield', word);
+  for (const word of ['ఏంటి', 'क्या', 'என்ன', 'what']) assert.equal(decide(word, speaking), 'yield', word);
+  assert.equal(decide('కాదు కాదు, 203', speaking), 'yield');
+  assert.equal(decide('అవును, కానీ tablet వేసుకోలేదు', speaking), 'yield', 'real content still stops it');
+});

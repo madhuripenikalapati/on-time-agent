@@ -1,24 +1,20 @@
-// Amma's phone: waits for a call, rings, and runs the live Telugu conversation.
+// Amma's phone: waits for a call, rings, and runs the live conversation in her language.
 import { h, icon, api, poll, time, slotOf, packCard } from './ui.mjs';
 import { VoiceCall } from './realtime.mjs';
-import { runsOn } from './schedule.mjs';
+import { takenOn } from './schedule.mjs';
 import { turnChip } from './family.mjs';
+import { languageOf, fill } from './languages.mjs';
 
-const T = {
-  ready: 'ఫోన్ సిద్ధం చేయడానికి నొక్కండి',
-  readyEn: 'Tap once so the phone can ring and hear you',
-  hello: address => 'నమస్కారం, ' + address,
-  idle: 'మందుల సమయానికి On Time కాల్ చేస్తుంది',
-  next: 'తదుపరి మందు',
-  calling: 'On Time కాల్ చేస్తోంది…',
-  answer: 'ఎత్తండి',
-  decline: 'వద్దు',
-  connecting: 'కలుపుతోంది…',
-  ended: 'కాల్ ముగిసింది',
-  speaking: 'మాట్లాడుతోంది',
-  listening: 'వింటోంది',
-  noMic: 'Microphone is blocked. Allow it in the browser’s site settings and reload.',
-};
+// Screen text in the patient's language (from dist/languages.mjs).
+function strings(code) {
+  const ui = languageOf(code).ui;
+  return {
+    ...ui,
+    hello: address => fill(ui.hello, { address }),
+    readyEn: 'Tap once so the phone can ring and hear you',
+    noMic: 'Microphone is blocked. Allow it in the browser’s site settings and reload.',
+  };
+}
 
 export function mountPhone(root, id, { stage = false } = {}) {
   let data = null;
@@ -32,6 +28,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
   let caption = '';
   let heard = '';
   let pack = null;
+  let packNode = null;
   let turns = [];
   let agentState = 'speaking';
   let error = '';
@@ -41,6 +38,8 @@ export function mountPhone(root, id, { stage = false } = {}) {
   let advancing = false;
   let unanswered = null;
 
+  // Always the current patient's language, even if the family changes it.
+  const T = new Proxy({}, { get: (_, key) => strings(data?.patient?.language)[key] });
   const phone = h('div', { class: 'phone' });
   root.append(h('div', { class: 'phone-page' }, phone));
 
@@ -71,7 +70,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
     if (screen === 'locked') {
       return [h('div', { class: 'center' },
         h('div', { class: 'orb' }, icon('logo')),
-        h('div', { class: 'greet te' }, T.hello(data?.patient?.callName || name + ' గారు')),
+        h('div', { class: 'greet te' }, T.hello(data?.patient?.callName || name + languageOf(data?.patient?.language).honorific)),
         h('button', { class: 'btn ready-btn te', onclick: () => unlock() }, T.ready),
         h('div', { class: 'soft small' }, T.readyEn),
         error ? h('div', { class: 'error-banner' }, error) : null)];
@@ -80,7 +79,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       const next = nextMedicine();
       return [h('div', { class: 'center' },
         h('div', { class: 'big-time' }, new Date().toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' }).replace(/\s?[ap]m/i, '')),
-        h('div', { class: 'greet te' }, T.hello(data?.patient?.callName || name + ' గారు')),
+        h('div', { class: 'greet te' }, T.hello(data?.patient?.callName || name + languageOf(data?.patient?.language).honorific)),
         h('div', { class: 'soft te' }, T.idle),
         next ? h('div', { class: 'next' }, next.photo ? h('img', { class: 'next-photo', src: next.photo, alt: 'Photo of the ' + next.name + ' strip' }) : null, h('span', { class: 'soft small te' }, T.next), h('strong', { class: 'next-name' }, next.name), h('span', { class: 'soft small' }, [next.brand, next.amount, next.when].filter(Boolean).join(' · '))) : null,
         data?.followUp ? h('div', { class: 'soft small' }, 'Follow-up call at ' + time(data.followUp.at)) : null,
@@ -110,9 +109,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
           h('button', { 'aria-pressed': String(mode === 'standard'), onclick: () => setMode('standard') }, 'Standard bot'))),
       h('div', { class: 'caller' }, h('div', { class: orbClass }, icon('logo')),
         h('div', { class: 'soft small te' }, agentState === 'listening' || agentState === 'ducked' ? T.listening : T.speaking)),
-      pack ? h('div', {}, packCard(pack), h('div', { class: 'pack-card pack-actions' },
-        h('button', { class: 'btn small', onclick: () => packAnswer(true) }, '✓ Label matches'),
-        h('button', { class: 'btn small', onclick: () => packAnswer(false) }, 'Different / can’t read'))) : null,
+      pack ? packView() : null,
       h('div', { class: 'caption te', 'aria-live': 'polite' }, caption || '…', heard ? h('span', { class: 'you' }, '🗣 ' + heard) : null),
       h('div', { class: 'turn-strip' }, turns.slice(-3).map(turnChip)),
       error ? h('div', { class: 'error-banner' }, error) : null,
@@ -120,12 +117,27 @@ export function mountPhone(root, id, { stage = false } = {}) {
     )];
   }
 
+  // The pack card is built once per show_pack and reused across renders. Rebuilding it on every
+  // caption update reloaded the photo and replayed its slide-in animation, so it flickered.
+  function packView() {
+    if (packNode?.medicineId !== pack.id) {
+      const node = h('div', {}, packCard(pack), h('div', { class: 'pack-card pack-actions' },
+        h('button', { class: 'btn small', onclick: () => packAnswer(true) }, '✓ Label matches'),
+        h('button', { class: 'btn small', onclick: () => packAnswer(false) }, 'Different / can’t read')));
+      node.medicineId = pack.id;
+      // Animate in once; a re-inserted node must not replay the animation.
+      node.addEventListener('animationend', () => node.classList.add('settled'), { once: true });
+      packNode = node;
+    }
+    return packNode;
+  }
+
   function nextMedicine() {
     if (!data?.medicines?.length) return null;
     const taken = data.todayDoses ?? {};
     const order = ['morning', 'afternoon', 'night'];
     const weekday = new Date(data.serverTime + 5.5 * 3600e3).getUTCDay();
-    const open = data.medicines.filter(m => runsOn(m.days, weekday) && taken[m.id]?.status !== 'taken')
+    const open = data.medicines.filter(m => takenOn(m, data.today) && taken[m.id]?.status !== 'taken')
       .sort((a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b)));
     // The next one by time of day; earlier ones still open come after (they were missed).
     const now = order.indexOf(data.slot);
@@ -260,7 +272,9 @@ export function mountPhone(root, id, { stage = false } = {}) {
       const started = await api.startCall(id, {});
       call = started.call;
       data = started.household;
-      voice = new VoiceCall({ secret: started.secret.value, microphone, mode, onTool, onUpdate });
+      const lang = languageOf(data.patient?.language);
+      const farewell = { language: lang.name, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
+      voice = new VoiceCall({ secret: started.secret.value, microphone, mode, onTool, onUpdate, farewell });
       await voice.connect();
       startedAt = Date.now();
       screen = 'call';
@@ -331,7 +345,13 @@ export function mountPhone(root, id, { stage = false } = {}) {
 
   function onUpdate(event) {
     switch (event.type) {
-      case 'agent-caption': caption = event.text; break;
+      case 'agent-caption': {
+        // Captions arrive word by word: update the text in place instead of re-rendering the screen.
+        caption = event.text;
+        const box = phone.querySelector('.caption');
+        if (screen === 'call' && box?.firstChild?.nodeType === Node.TEXT_NODE) { box.firstChild.nodeValue = caption || '…'; return; }
+        break;
+      }
       case 'agent-said': enqueue({ type: 'transcript', who: 'agent', text: event.text }); break;
       case 'caller-said': heard = event.text; enqueue({ type: 'transcript', who: 'patient', text: event.text }); break;
       case 'turn': turns.push(event); enqueue({ type: 'turn', heard: event.heard, decision: event.decision, ms: event.ms }); break;

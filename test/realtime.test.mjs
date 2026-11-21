@@ -51,7 +51,7 @@ test('ending a call without having spoken asks for one Telugu goodbye with tools
   assert.deepEqual(tools.map(t => t.name), ['end_call']);
   const goodbye = sent.find(e => e.type === 'response.create');
   assert.equal(goodbye.response.tool_choice, 'none');
-  assert.match(goodbye.response.instructions, /Telugu/);
+  assert.match(goodbye.response.instructions, /language of this call/);
   call.hangUp();
 });
 
@@ -166,4 +166,19 @@ test('voice detector adapts to steady background noise', () => {
   assert.deepEqual(events, []);
   for (let i = 0; i < 10; i++) { t += 20; vad.level(0.09, t); }
   assert.deepEqual(events, ['start']);
+});
+
+test('the safety-net goodbye is in the patient\'s language', async () => {
+  const sent = [];
+  const call = new VoiceCall({ secret: 't', microphone: null, onTool: async () => ({ ok: true }), onUpdate: () => {},
+    farewell: { language: 'Hindi', done: 'ठीक है, बस इतना ही. अपना ध्यान रखिए.', callback: '<N> मिनट बाद मैं फिर से call करूँगी.' } });
+  call.channel = { readyState: 'open', send: d => sent.push(JSON.parse(d)), close() {} };
+  call.callerTurn(); sent.length = 0;
+  call.handle({ type: 'response.done', response: { output: [{ type: 'function_call', name: 'end_call', arguments: '{"summary":"x"}', call_id: 'c' }] } });
+  await new Promise(r => setImmediate(r));
+  const goodbye = sent.find(e => e.type === 'response.create');
+  assert.match(goodbye.response.instructions, /Hindi/);
+  assert.match(goodbye.response.instructions, /अपना ध्यान रखिए/);
+  assert.doesNotMatch(goodbye.response.instructions, /[\u0C00-\u0C7F]/, 'no Telugu');
+  call.hangUp();
 });

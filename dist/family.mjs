@@ -3,7 +3,8 @@ import {
   h, icon, api, poll, time, dateTime, ago, day, slotLabel, slotEmoji, slotOf, whenText, statusPill,
   shrinkImage, fileToBase64, packCard, toast,
 } from './ui.mjs';
-import { DAY_OPTIONS, runsOn, dosesPerWeek } from './schedule.mjs';
+import { LANGUAGES, languageOf } from './languages.mjs';
+import { DAY_OPTIONS, takenOn, dosesPerWeek, course, dosesLeftInCourse, addDays } from './schedule.mjs';
 
 const alertCopy = {
   pack_mismatch: ['💊', 'Needs help checking the pack'],
@@ -81,7 +82,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const name = data.patient.name;
     const doses = data.todayDoses ?? {};
     const weekday = new Date(data.serverTime + 5.5 * 3600e3).getUTCDay();
-    const scheduled = data.medicines.filter(m => runsOn(m.days, weekday));
+    const scheduled = data.medicines.filter(m => takenOn(m, data.today));
     const taken = scheduled.filter(m => doses[m.id]?.status === 'taken').length;
     const call = data.calls[0];
     const openAlerts = data.alerts.filter(a => !a.resolved);
@@ -147,14 +148,15 @@ export function mountFamily(root, id, { stage = false } = {}) {
         return h('div', { class: 'dose' },
           h('span', { class: 'when', title: slotLabel[slotOf(m)] }, slotEmoji[slotOf(m)]),
           h('div', {}, h('strong', {}, (m.nickname ? m.nickname + ' · ' : '') + m.name + (m.strength ? ' ' + m.strength : '')), h('span', { class: 'detail' }, [m.amount, whenText(m), m.use].filter(Boolean).join(' · '))),
-          h('div', { class: 'row' }, h('span', { class: 'pill ' + kind }, label + (dose ? ' · ' + time(dose.at) : ''))));
+          h('div', { class: 'row' }, coursePill(m), h('span', { class: 'pill ' + kind }, label + (dose ? ' · ' + time(dose.at) : ''))));
       })) : h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => select('medicines') }, 'Add medicines')),
+      finishedCourses(),
     ));
 
     const right = [];
     const lastDone = data.calls.find(c => c.status === 'ended' && c.summary);
     right.push(h('section', { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', {}, 'Latest call summary'), lastDone && h('span', { class: 'pill info' }, 'Translated from Telugu')),
+      h('div', { class: 'card-head' }, h('h2', {}, 'Latest call summary'), lastDone && h('span', { class: 'pill info' }, 'Translated from ' + languageOf(data.patient.language).name)),
       lastDone
         ? [h('p', { class: 'summary' }, lastDone.summary), h('p', { class: 'summary-meta' }, dateTime(lastDone.startedAt) + ' · ' + (lastDone.kind === 'followup' ? 'Follow-up call' : 'Scheduled call') + ' · ' + duration(lastDone))]
         : h('p', { class: 'muted' }, 'After each call you’ll see a short English summary here.')));
@@ -179,19 +181,43 @@ export function mountFamily(root, id, { stage = false } = {}) {
     );
   }
 
+  function coursePill(m) {
+    const c = course(m, data.today);
+    if (!c || c.state !== 'active') return null;
+    return h('span', { class: 'pill ' + (c.last ? 'warn' : 'info') + ' course-pill' }, c.last ? 'Last day today' : 'Day ' + c.day + ' of ' + c.total);
+  }
+
+  function finishedCourses() {
+    const seen = new Set();
+    const done = data.medicines.filter(m => course(m, data.today)?.state === 'finished' && !seen.has(m.name) && seen.add(m.name));
+    if (!done.length) return null;
+    return h('p', { class: 'small muted course-done' }, '✓ Course finished: ' + done.map(m => (m.nickname ? m.nickname + ' (' + m.name + ')' : m.name) + ' on ' + day(Date.parse(course(m, data.today).ends))).join(', ') + '. On Time no longer asks about ' + (done.length > 1 ? 'these' : 'it') + '.');
+  }
+
   function refillLines() {
     const lead = 10;
     // The same medicine taken at several meals shares one strip.
     const packs = new Map();
-    for (const m of data.medicines.filter(m => m.stock !== null && m.stock !== undefined)) {
+    for (const m of data.medicines.filter(m => m.stock !== null && m.stock !== undefined && course(m, data.today)?.state !== 'finished')) {
       const key = (m.name + '|' + m.strength).toLowerCase();
-      const use = (/^½|half|^0?\.5/i.test(m.amount) ? 0.5 : (parseFloat(m.amount) || 1)) * dosesPerWeek(m.days) / 7;
-      const pack = packs.get(key) ?? { name: m.name, stock: m.stock, perDay: 0 };
+      const units = /^½|half|^0?\.5/i.test(m.amount) ? 0.5 : (parseFloat(m.amount) || 1);
+      const use = units * dosesPerWeek(m.days) / 7;
+      const pack = packs.get(key) ?? { name: m.name, stock: m.stock, perDay: 0, courseNeed: 0, isCourse: false };
       pack.perDay += use;
       pack.stock = Math.min(pack.stock, m.stock);
+      const left = dosesLeftInCourse(m, data.today);
+      if (left !== null) { pack.isCourse = true; pack.courseNeed += left * units; pack.ends = course(m, data.today).ends; }
       packs.set(key, pack);
     }
     return [...packs.values()].map(m => {
+      // A course that the strip will outlast needs no refill.
+      if (m.isCourse) {
+        const enough = m.stock >= m.courseNeed;
+        return h('div', { class: 'dose' },
+          h('span', { class: 'when' }, '📦'),
+          h('div', {}, h('strong', {}, m.name), h('span', { class: 'detail' }, m.stock + ' left · ' + m.courseNeed + ' needed until the course ends ' + day(Date.parse(m.ends)))),
+          h('span', { class: 'pill ' + (enough ? 'good' : 'warn') }, enough ? 'Enough for the course' : 'Buy ' + Math.ceil(m.courseNeed - m.stock) + ' more'));
+      }
       const daysLeft = Math.floor(m.stock / m.perDay);
       const runOut = data.serverTime + daysLeft * 86400e3;
       const remind = runOut - lead * 86400e3;
@@ -279,7 +305,9 @@ export function mountFamily(root, id, { stage = false } = {}) {
         const bytes = page.data.length * 0.75;
         // A PDF always goes on its own: mixed with photos, the model tends to read only the photos.
         if (page.type === 'application/pdf') { if (current.length) groups.push(current); groups.push([page]); current = []; size = 0; continue; }
-        if (current.length && (current.length === 4 || size + bytes > 3_000_000)) { groups.push(current); current = []; size = 0; }
+        // One page per request: the careful model takes 7-12 s a page, well under the 30 s limit
+        // (two pages took up to 24 s, too close). Pages are read in parallel instead.
+        if (current.length) { groups.push(current); current = []; size = 0; }
         current.push(page);
         size += bytes;
       }
@@ -294,16 +322,21 @@ export function mountFamily(root, id, { stage = false } = {}) {
         if (chosen.some(f => f.type === 'application/pdf' && f.size > 3_500_000)) throw new Error('Split large PDFs, or upload photos of their pages.');
         progress('Preparing ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '…');
         const groups = batches(await preparePages());
-        const rows = [];
-        const notes = [];
+        // Read the groups in parallel (up to four at once), keeping page order in the result.
+        const drafts = new Array(groups.length);
+        let next = 0;
         let done = 0;
-        for (const group of groups) {
-          progress('Reading pages ' + (done + 1) + (group.length > 1 ? '–' + (done + group.length) : '') + ' of ' + chosen.length + '…');
-          const draft = await api.prescription(group);
-          rows.push(...draft.medicines);
-          if (draft.notes) notes.push(draft.notes);
-          done += group.length;
-        }
+        progress('Reading ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + ' carefully…');
+        await Promise.all(Array.from({ length: Math.min(4, groups.length) }, async () => {
+          while (next < groups.length) {
+            const index = next++;
+            drafts[index] = await api.prescription(groups[index]);
+            done += groups[index].length;
+            if (done < chosen.length) progress('Read ' + done + ' of ' + chosen.length + ' pages…');
+          }
+        }));
+        const rows = drafts.flatMap(d => d.medicines);
+        const notes = drafts.map(d => d.notes).filter(Boolean);
         // The same medicine and timing on two pages is one row.
         const seen = new Set();
         const unique = rows.filter(row => {
@@ -319,6 +352,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
           name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '',
           nickname: row.nickname ?? '', use: row.use ?? '', aiNickname: Boolean(row.nickname || row.use),
           meal: row.meal ?? '', timing: row.timing ?? '', time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '',
+          courseDays: /^\d{1,3}$/.test(String(row.duration_days ?? '')) && +row.duration_days >= 1 && +row.duration_days <= 365 ? +row.duration_days : '',
         }));
         reviewed.checked = false;
         drawList();
@@ -372,8 +406,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
       scanButton.disabled = true;
       const results = [];
       try {
-        for (let start = 0; start < packFiles.length; start += 4) {
-          const group = packFiles.slice(start, start + 4);
+        for (let start = 0; start < packFiles.length; start += 3) {
+          const group = packFiles.slice(start, start + 3);
           packStatus.replaceChildren(h('p', { class: 'notice' }, 'Reading packs ' + (start + 1) + (group.length > 1 ? '–' + (start + group.length) : '') + ' of ' + packFiles.length + '…'));
           const photos = await Promise.all(group.map(async f => ({ type: 'image/jpeg', data: (await shrinkImage(f, 1600, 0.85)).split(',')[1] })));
           const { packs } = await api.scanPacks(id, photos, meds);
@@ -399,7 +433,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       for (const r of results) if (r.index >= 0 && editor.medicines[r.index]) r.index = firstIndex.get(packKey(editor.medicines[r.index])) ?? -1;
       const rows = results.map(r => {
         const select = h('select', { onchange: e => { r.index = Number(e.target.value); } }, options.map(([value, label]) => h('option', { value, selected: Number(value) === r.index }, label)));
-        const count = h('input', { type: 'number', min: 0, max: 500, value: r.tablets_left ?? '', placeholder: 'count', oninput: e => { r.tablets_left = e.target.value === '' ? null : Number(e.target.value); r.edited = true; } });
+        const count = h('input', { type: 'number', min: 0, max: 500, value: r.tablets_left ?? '', placeholder: r.tablets_left === null && r.visible_count ? 'at least ' + r.visible_count + ', count by hand' : 'count', oninput: e => { r.tablets_left = e.target.value === '' ? null : Number(e.target.value); r.edited = true; } });
         return h('div', { class: 'pack-row' },
           h('img', { src: URL.createObjectURL(r.file), alt: 'Pack photo' }),
           h('div', { class: 'pack-fields' },
@@ -465,12 +499,12 @@ export function mountFamily(root, id, { stage = false } = {}) {
       h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Medicines'), h('p', {}, 'Upload the prescription, check what AI drafted, and add a photo of each pack so ' + data.patient.name + ' can match it on the call.'))),
       h('div', { class: 'stack' },
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Prescription')), drop, pages, h('div', { class: 'row' }, readButton), status),
-        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine packs at home'), h('p', { class: 'hint' }, 'Optional, but it makes the “ఈ tablet?” moment work with her own strips.'))), packDrop, packThumbs, h('div', { class: 'row' }, scanButton), packStatus),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine packs at home'), h('p', { class: 'hint' }, 'Optional, but it makes the “which tablet?” moment work with her own strips.'))), packDrop, packThumbs, h('div', { class: 'row' }, scanButton), packStatus),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine plan'), h('p', { class: 'hint' }, 'Highlighted fields were unclear or missing. The simple name is what On Time says on the call (“Sugar tablet”), so Amma doesn’t need to read brand names.'))), list),
         h('section', { class: 'card' }, h('h2', {}, 'Calls'), h('p', { class: 'hint' }, 'How On Time talks to ' + data.patient.name + '.'),
           h('div', { class: 'settings' },
             h('div', { class: 'field wide' }, 'Family', h('div', { class: 'family-line' },
-              (data.patient.callName || data.patient.name + ' గారు') + ' · ' + (data.caregivers?.length ? data.caregivers.map(c => c.name + ' (' + relationLabel[c.relation] + (c.primary ? ', main contact' : '') + ')').join(', ') : 'no family added'),
+              (data.patient.callName || data.patient.name + languageOf(data.patient.language).honorific) + ' · calls in ' + languageOf(data.patient.language).name + ' · ' + (data.caregivers?.length ? data.caregivers.map(c => c.name + ' (' + relationLabel[c.relation] + (c.primary ? ', main contact' : '') + ')').join(', ') : 'no family added'),
               ' ', h('button', { class: 'btn small', onclick: () => select('welcome') }, 'Edit family'))),
             field('Call back after (minutes)', followMinutes)),
           h('div', { class: 'stack' },
@@ -488,6 +522,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       setupBy: data.setupBy || 'family',
       name: data.onboarded ? data.patient.name : '',
       callName: data.patient.callName || '',
+      language: data.patient.language || 'te',
       people: structuredClone(data.caregivers?.length ? data.caregivers : [{ name: '', relation: 'son', primary: true }]),
     };
     const root = h('div', { class: 'welcome' });
@@ -502,7 +537,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
       const address = h('div', { class: 'chips' });
       const custom = h('input', { placeholder: 'Or type how you address them', maxlength: 40, value: state.callName, oninput: e => { state.callName = e.target.value; drawAddress(); } });
       const drawAddress = () => {
-        const options = [(state.name.trim() || 'Name') + ' గారు', 'అమ్మ', 'నాన్న', 'అమ్మమ్మ', 'నాన్నమ్మ', 'తాతయ్య', 'అత్తయ్య', 'మామయ్య'];
+        const lang = languageOf(state.language);
+        const options = [(state.name.trim() || 'Name') + lang.honorific, ...lang.addresses];
         const current = state.callName || options[0];
         address.replaceChildren(...options.map((option, i) => h('button', { type: 'button', class: 'chip' + (current === option ? ' on' : ''), onclick: () => { state.callName = i === 0 ? '' : option; custom.value = state.callName; drawAddress(); } }, option)));
       };
@@ -516,7 +552,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         finish.disabled = true;
         try {
           const caregivers = state.people.filter(p => p.name.trim());
-          data = await api.saveProfile(id, { setupBy: state.setupBy, patient: { name: state.name, callName: state.callName }, caregivers });
+          data = await api.saveProfile(id, { setupBy: state.setupBy, patient: { name: state.name, callName: state.callName, language: state.language }, caregivers });
           toast('Saved. Next: add ' + data.patient.name + '’s medicines.');
           select(data.medicines.length ? 'today' : 'medicines');
         } catch (error) {
@@ -538,6 +574,13 @@ export function mountFamily(root, id, { stage = false } = {}) {
             } }, h('span', { class: 'emoji' }, emoji), h('strong', {}, title), h('span', { class: 'muted small' }, hint))))),
           h('section', { class: 'card' }, h('h2', {}, state.setupBy === 'self' ? '2 · About you' : '2 · Who takes the medicines?'),
             h('div', { class: 'settings' }, h('label', { class: 'field' }, 'Their name', nameInput)),
+            h('p', { class: 'hint' }, 'Which language should On Time speak on the call?'),
+            h('div', { class: 'chips languages' }, Object.entries(LANGUAGES).map(([code, l]) => h('button', { type: 'button', class: 'chip lang' + (state.language === code ? ' on' : ''), title: l.name, onclick: () => {
+              // A greeting chosen for the old language makes no sense in the new one.
+              if (state.callName && !languageOf(code).addresses.includes(state.callName)) state.callName = '';
+              state.language = code;
+              draw();
+            } }, h('span', { class: 'native' }, l.native), code === 'en' ? null : h('span', { class: 'small muted' }, l.name)))),
             h('p', { class: 'hint' }, 'How should On Time greet ' + patient + ' on the call?'), address, h('label', { class: 'field' }, custom)),
           h('section', { class: 'card' }, h('h2', {}, state.setupBy === 'self' ? '3 · Family to keep updated (optional)' : '3 · Family and caretakers'),
             h('p', { class: 'hint' }, 'The main contact is who On Time mentions on the call (“I’ll tell Ravi”) and who gets alerts first.'),
@@ -548,6 +591,21 @@ export function mountFamily(root, id, { stage = false } = {}) {
     };
     draw();
     return root;
+  }
+
+  // "For 10 days, then stop": empty means ongoing. Shows when the course ends.
+  function courseField(m, redraw) {
+    const days = h('input', { type: 'number', min: 1, max: 365, value: m.courseDays ?? '', placeholder: 'Ongoing', onchange: e => {
+      const n = Math.round(Number(e.target.value));
+      m.courseDays = n >= 1 && n <= 365 ? n : '';
+      if (m.courseDays && !m.startDate) m.startDate = data.today;
+      redraw();
+    } });
+    const start = h('input', { type: 'date', value: m.startDate || data.today, onchange: e => { m.startDate = e.target.value; redraw(); } });
+    const c = m.courseDays ? course({ ...m, startDate: m.startDate || data.today }, data.today) : null;
+    return h('div', { class: 'field wide course-field' }, 'How long (days)',
+      h('div', { class: 'course-inputs' }, days, m.courseDays ? h('span', { class: 'muted small' }, 'from') : null, m.courseDays ? start : null),
+      h('span', { class: 'small ' + (c?.state === 'finished' ? 'warn-text' : 'muted') }, !c ? 'Ongoing, no end date' : c.state === 'finished' ? 'Course finished on ' + day(Date.parse(c.ends)) : 'Ends ' + day(Date.parse(c.ends)) + (c.state === 'active' ? ' · day ' + c.day + ' of ' + c.total : '')));
   }
 
   function medCard(m, index, redraw) {
@@ -575,6 +633,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         f('Timing', select('timing', [['after', 'After meal'], ['before', 'Before meal'], ['fixed', 'Fixed time']]), 'timing'),
         f('Usual time', input('time', { type: 'time' })),
         f('Days', select('days', DAY_OPTIONS), 'days'),
+        courseField(m, redraw),
         f(m.aiStock ? 'Tablets left · AI counted' : 'Tablets left', input('stock', { type: 'number', min: 0, step: 0.5, placeholder: 'count' }), null, m.aiStock ? 'suggested' : ''),
         h('div', { class: 'field' }, ' ', h('button', { class: 'btn small danger', onclick: () => { editor.medicines.splice(index, 1); redraw(); } }, 'Remove')),
         f(m.aiNickname ? 'Used for · AI suggested' : 'Used for', input('use', { placeholder: 'e.g. Blood sugar (diabetes)', maxlength: 80 }), null, 'wide' + (m.aiNickname ? ' suggested' : '')),

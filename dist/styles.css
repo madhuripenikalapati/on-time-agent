@@ -220,6 +220,7 @@ h1, h2, h3, p { margin: 0; }
 .caption { min-height: 120px; background: rgb(255 255 255 / 7%); border-radius: 20px; padding: 16px 18px; font-size: 1.28rem; line-height: 1.5; }
 .caption .you { display: block; margin-top: 10px; font-size: 1.05rem; color: #a7f3d0; }
 .phone .pack-card { animation: up .3s ease; }
+.phone .settled .pack-card { animation: none; }
 @keyframes up { from { transform: translateY(30px); opacity: 0; } }
 .pack-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 14px 14px; }
 .pack-actions .btn { color: var(--ink); background: #f3efe6; border-color: transparent; white-space: normal; }
@@ -308,3 +309,12 @@ h1, h2, h3, p { margin: 0; }
 .pack-fields select, .pack-fields input { border: 1px solid #d8d0c1; border-radius: 10px; padding: .5rem .6rem; background: #fff; min-width: 0; width: 100%; }
 @media (max-width: 640px) { .pack-fields { grid-template-columns: 1fr; } }
 .phone .next-photo { width: 96px; height: 96px; object-fit: cover; border-radius: 14px; justify-self: center; margin-bottom: 4px; }
+
+.course-inputs { display: flex; gap: 8px; align-items: center; }
+.course-inputs input[type=number] { max-width: 110px; }
+.warn-text { color: var(--warn); font-weight: 650; }
+.course-pill { font-size: .75rem; }
+
+.chips.languages .chip { display: grid; justify-items: center; gap: 0; min-width: 96px; padding: .45rem .8rem; }
+.chips.languages .chip .native { font-size: 1.05rem; }
+.chips.languages .chip.on .muted { color: rgb(255 255 255 / 80%); }

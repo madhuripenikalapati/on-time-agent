@@ -8,3 +8,4 @@ node_modules/
 .claude/settings.local.json
 build/
 dist/_test/
+voice-samples/

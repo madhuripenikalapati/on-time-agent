@@ -40,7 +40,6 @@ Resources:
       Architectures: [arm64]
       Timeout: 30
       MemorySize: 512
-      ReservedConcurrentExecutions: 5
       Environment:
         Variables:
           SECRET_ARN: !Ref PilotSecretArn

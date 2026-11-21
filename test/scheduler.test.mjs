@@ -87,3 +87,11 @@ test('VAPID keys sign tokens that verify, and only real push services are accept
   const sig = sign('sha256', Buffer.from('a.b'), { key: priv, dsaEncoding: 'ieee-p1363' });
   assert.equal(verify('sha256', Buffer.from('a.b'), { key: pub, dsaEncoding: 'ieee-p1363' }, sig), true);
 });
+
+test('tablets left are computed from the strip grid, and a cut-off strip gives no total', async () => {
+  const { countFromStrips } = await import('../lib/openai.mjs');
+  assert.deepEqual(countFromStrips([{ rows: 4, columns: 7, empty_pockets: 3, fully_visible: true }, { rows: 4, columns: 7, empty_pockets: 0, fully_visible: true }]), { left: 53, partial: false });
+  assert.deepEqual(countFromStrips([{ rows: 2, columns: 5, empty_pockets: 0, fully_visible: false }]), { left: 10, partial: true });
+  assert.deepEqual(countFromStrips([]), { left: null, partial: false });
+  assert.equal(countFromStrips([{ rows: 2, columns: 5, empty_pockets: 11, fully_visible: true }]).left, null, 'impossible numbers are rejected');
+});

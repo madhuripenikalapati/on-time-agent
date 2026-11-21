@@ -2,8 +2,6 @@
 // pressing "Call now"), show a call-style alert even if the app is closed. Tapping it opens
 // the ringing screen. The push carries no data; we fetch who is calling.
 
-const slotTe = { morning: 'ఉదయం', afternoon: 'మధ్యాహ్నం', night: 'రాత్రి' };
-
 async function householdId() {
   const cache = await caches.open('on-time');
   const saved = await cache.match('/__household');
@@ -21,11 +19,9 @@ self.addEventListener('push', event => {
       try { household = await (await fetch('/api/h/' + id, { cache: 'no-store' })).json(); } catch {}
     }
     const ringing = household?.ring;
-    const name = household?.patient?.name;
-    const title = ringing ? 'On Time కాల్ చేస్తోంది 📞' : 'On Time';
-    const body = ringing
-      ? (name ? name + ' గారు, ' : '') + (slotTe[ringing.slot] ?? '') + ' మందుల సమయం. ఎత్తడానికి నొక్కండి.'
-      : 'మీకు On Time నుంచి ఒక call వచ్చింది.';
+    // The server sends the alert text already in the patient's language.
+    const title = ringing ? (household.notify?.title ?? 'On Time 📞') : 'On Time';
+    const body = ringing ? (household.notify?.body ?? 'Tap to answer.') : 'You have a missed call from On Time.';
     await self.registration.showNotification(title, {
       body,
       tag: 'on-time-call',
@@ -35,7 +31,7 @@ self.addEventListener('push', event => {
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',
       data: { id },
-      actions: ringing ? [{ action: 'answer', title: 'ఎత్తండి · Answer' }] : [],
+      actions: ringing ? [{ action: 'answer', title: (household.notify?.answer ?? 'Answer') + ' · Answer' }] : [],
     });
   })());
 });

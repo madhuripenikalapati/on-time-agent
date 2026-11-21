@@ -7,9 +7,47 @@
 0. **Onboarding.** Who is setting this up (family, a paid caretaker, or the patient themself), the patient's name and how On Time should greet them on the call ("అమ్మ", "నాన్న", "Lakshmi గారు"…), and the family members and caretakers, with one main contact. The agent mentions the main contact ("Priya గారికి చెప్తాను").
 
 1. **Prescription → plan.** Upload any number of photos or PDF pages (printed or handwritten). They are shrunk in the browser, read in batches of four, and merged, with duplicates across pages removed (up to 20 medicines). `gpt-4.1` drafts each medicine, dose, meal time and schedule (daily, Monday and Thursday, or once a week), leaving unclear fields blank. It also suggests a **simple name** for each one ("Glycomet → Sugar tablet", "Thyronorm → Thyroid tablet") so a patient who can't read brand names still knows which one is meant. Typing a medicine by hand fills in the same simple name and a plain "used for" line. Both are marked as AI suggestions until the family edits them. A family member checks and edits every field, adds a photo of each pack, and saves. A schedule the app doesn't recognise is rejected, never silently turned into "daily".
+   **Courses:** "for 5 days" or "x 3 months" sets a course length, and "stat" becomes a single day. Calls stop the day after the course ends. The family sees "Day 3 of 10", then "Course finished". Refills check whether the strip will last until the end. On the last day the agent tells the patient they can stop from tomorrow.
 1b. **Scan the packs at home.** Photograph every strip or box. `gpt-4.1` reads each label, matches it to a medicine in the plan (never by the tablet's look), and counts the pockets that still hold a tablet. A closed box is left blank rather than guessed. The family reviews each match and count. The photo becomes that medicine's pack picture, so when the patient asks "ఈ tablet?" they see their own strip, and the tablet count drives refill reminders.
 2. **A real Telugu phone conversation.** At the scheduled time, the patient's phone rings. A Realtime voice agent (`gpt-realtime` over WebRTC) holds a natural Telugu conversation grounded in the saved plan. It can record a dose, show the pack, schedule a callback and alert the family through tool calls.
 3. **The family sees it live.** The dashboard (any device) shows each dose as the patient reports it, the live transcript, alerts such as a pack mix-up or a new symptom, refill dates, and an English summary of every call.
+
+## Models, chosen by testing
+
+| Job | Model | Why |
+|---|---|---|
+| Live Telugu call (listen, talk, tools, summary) | `gpt-realtime-2.1`, voice `marin`, a little slower for elders | Newest realtime model; much better Telugu than the original `gpt-realtime`. Voice chosen by recording 3 Telugu phrasebook lines in all 10 voices, transcribing them back for clarity, and having `gpt-audio-1.5` rank them head to head for native-sounding Telugu: `marin` scored highest overall |
+| Turning the caller's speech into text | `gpt-transcribe`, Telugu | Newest transcription model |
+| Reading prescriptions (photos, PDFs) | `gpt-5.2`, medium reasoning (low for PDFs) | On four real prescriptions (faint pencil, eye drops, a pharmacy label, blurry French handwriting) it guessed less and explained shorthand ("stat", "8hrly", "nocte", "for 5 days") |
+| Simple names ("Sugar tablet") and "used for" | `gpt-5.2`, low reasoning | `gpt-4.1-mini` called an antibiotic (Lyncipro) a "Sugar tablet"; `gpt-5.2` didn't |
+| Pack scanning (match + tablets left) | `gpt-5.2` with grid counting | 6/6 on real pack photos; `gpt-4.1` missed two |
+| Turn-taking (Avunu ≠ Aagandi) | No model: rules in the browser | Instant and the same every time |
+
+Each prescription page is read in its own request, all pages in parallel. Real pages took 9–18 s each, under the 30 s request limit. Two pages per request took up to 24 s, which was too close.
+
+## Tested on real pack photos
+
+Six openly licensed photos from Wikimedia Commons, with the truth worked out by hand:
+
+| Photo | Truth | Result |
+|---|---|---|
+| A single loose tablet (Biogesic), no pack | No match: never identify a loose tablet by its look | No match ✅ |
+| Metformin box with two strips cut off by the frame | Can't be counted | Matched to Glycomet (same generic); "at least 10 visible", low confidence ✅ |
+| Siofor 500 (German metformin), one full strip | 10 | Matched to Glycomet, noted as a different brand; 10 ✅ |
+| Neorelax MR, a real Indian strip, foil side only | Tablets not visible | Matched; count left blank ✅ |
+| Valaciclovir 500 with a Japanese label | 6 | Matched to Valcivir 500; 6 ✅ |
+| Zumenon 2 mg: one strip with 3 popped, one full | 53 | 53 ✅ |
+
+Asking the model for a total gave wrong counts with "high confidence" (50 for 53, 7 for 6). Now the model only describes each strip as a grid, its few empty pockets, and whether it is fully in view. The code does the arithmetic and sets the confidence. `gpt-5.2` got all six right this way, and `gpt-4.1` missed two.
+
+## Nine languages
+
+Calls, the patient's phone screen and the call alert work in **Telugu, Hindi, Tamil, Kannada, Malayalam, Marathi, Bengali, Gujarati and English**. The family picks the language and the greeting ("माँजी", "அம்மா", "Lakshmi గారు"…) during onboarding.
+
+- The Telugu phrasebook was written by hand. The others were generated once with `gpt-5.2` (high reasoning) from one English source and stored in `dist/languages.mjs`, so nothing is improvised live. Every phrase and placeholder is checked. Where verbs mark gender (Hindi, Marathi, Gujarati), the agent uses the feminine form to match its voice.
+- Turn-taking knows each language's listening sounds and stop words. Generated word lists were reviewed: "ठीक है" was removed from Hindi stop words, and "മതി" (enough) was moved from Malayalam listening sounds to stop words.
+- Speech-to-text runs in the call's language. Captions keep all Indian scripts and drop anything else.
+- Verified with live calls in Telugu, Hindi and Tamil, including the safety-net goodbye.
 
 ## An app on the parent's phone, with alarm-style call alerts
 

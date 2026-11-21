@@ -190,3 +190,58 @@ test('onboarding needs a patient name, and a family member unless it is for them
   const self = setProfile(newHousehold(), { setupBy: 'self', patient: { name: 'Kamala' }, caregivers: [] });
   assert.equal(self.patient.caregiverName, '');
 });
+
+test('a 5-day course is asked about for 5 days, then stops', async () => {
+  const { course, takenOn, dosesLeftInCourse } = await import('../dist/schedule.mjs');
+  const m = { days: 'daily', courseDays: 5, startDate: '2026-11-21' };
+  assert.equal(course(m, '2026-11-21').day, 1);
+  assert.equal(course(m, '2026-11-25').last, true);
+  assert.equal(course(m, '2026-11-25').ends, '2026-11-25');
+  assert.equal(takenOn(m, '2026-11-25'), true);
+  assert.equal(takenOn(m, '2026-11-26'), false, 'stops the day after the course ends');
+  assert.equal(takenOn(m, '2026-11-20'), false, 'not before it starts');
+  assert.equal(dosesLeftInCourse(m, '2026-11-23'), 3);
+  assert.equal(takenOn({ days: 'daily', courseDays: null }, '2030-01-01'), true, 'ongoing medicines never stop');
+});
+
+test('a finished course drops out of calls; saving starts a new course today', () => {
+  const doc = newHousehold(morning);
+  setPlan(doc, { medicines: [
+    { name: 'Lyncipro 500', meal: 'breakfast', timing: 'after', days: 'daily', courseDays: 5, startDate: '2026-11-10' },
+    { name: 'Telma 40', meal: 'breakfast', timing: 'after', days: 'daily' },
+  ] });
+  assert.deepEqual(dueMedicines(doc, 'morning', morning).map(m => m.name), ['Telma 40'], 'the course ended on 14 Nov');
+  setPlan(doc, { medicines: [{ name: 'Albendazole 400', meal: 'breakfast', timing: 'after', days: 'daily', courseDays: 1 }] });
+  assert.equal(doc.medicines[0].startDate, istDate(Date.now()), 'no start date means today');
+  setPlan(doc, { medicines: [{ name: 'Telma 40', meal: 'breakfast', timing: 'after', days: 'daily', startDate: '2026-11-10' }] });
+  assert.equal(doc.medicines[0].startDate, null, 'an ongoing medicine has no course dates');
+});
+
+test('on the last day the agent is told to say so', () => {
+  const doc = newHousehold(morning);
+  setPlan(doc, { medicines: [{ name: 'Lyncipro 500', nickname: 'Antibiotic', meal: 'breakfast', timing: 'after', days: 'daily', courseDays: 5, startDate: '2026-11-17' }] });
+  const agent = buildAgent(doc, startCall(doc, { slot: 'morning' }, morning)); // 21 Nov = day 5
+  assert.match(agent.instructions, /LAST DAY of a 5-day course/);
+  assert.match(agent.instructions, /ఆఖరి రోజు/);
+});
+
+test('a Hindi call: Hindi phrasebook, feminine voice, Hindi transcription, Hindi alert', async () => {
+  const { setProfile, requestCall, notifyText } = await import('../lib/household.mjs');
+  const doc = household();
+  setProfile(doc, { setupBy: 'family', patient: { name: 'Kamla', language: 'hi' }, caregivers: [{ name: 'Rohit', relation: 'son' }] });
+  setPlan(doc, structuredClone({ medicines: demoPlan.medicines }));
+  assert.equal(doc.patient.language, 'hi', 'saving medicines keeps the language');
+  const agent = buildAgent(doc, startCall(doc, { slot: 'morning' }, morning));
+  assert.equal(agent.language, 'hi');
+  assert.match(agent.instructions, /नमस्ते Kamla जी/);
+  assert.match(agent.instructions, /बोल रही हूँ/, 'a woman speaking');
+  assert.match(agent.instructions, /spoken Hindi/);
+  requestCall(doc, { slot: 'morning' }, morning);
+  assert.match(notifyText(doc).body, /Kamla जी/);
+});
+
+test('an unknown language falls back to Telugu', async () => {
+  const { setProfile } = await import('../lib/household.mjs');
+  const doc = setProfile(newHousehold(), { setupBy: 'self', patient: { name: 'X', language: 'klingon' }, caregivers: [] });
+  assert.equal(doc.patient.language, 'te');
+});

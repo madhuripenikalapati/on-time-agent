@@ -9,12 +9,10 @@ const DUCKED_VOLUME = 0.22;
 // Hindi), digits and punctuation, and repair doubled Telugu vowel signs ("ుు") that the
 // voice model occasionally emits. The agent itself only ever speaks Telugu.
 export function cleanText(text, { caller = false } = {}) {
-  const keep = caller
-    ? /[^\p{Script=Telugu}\p{Script=Latin}\p{Script=Devanagari}\p{N}\p{P}\p{Zs}₹%+/=-]/gu
-    : /[^\p{Script=Telugu}\p{Script=Latin}\p{N}\p{P}\p{Zs}₹%+/=-]/gu;
+  const keep = /[^\p{Script=Telugu}\p{Script=Devanagari}\p{Script=Tamil}\p{Script=Kannada}\p{Script=Malayalam}\p{Script=Bengali}\p{Script=Gujarati}\p{Script=Latin}\p{M}\p{N}\p{P}\p{Zs}₹%+/=-]/gu;
   return String(text ?? '')
     .replace(keep, '')
-    .replace(/([\u0C3E-\u0C4C])\1+/gu, '$1')
+    .replace(/([\u0900-\u0DFF])(?=\1)(?<=[\u093E-\u094C\u09BE-\u09CC\u0ABE-\u0ACC\u0BBE-\u0BCC\u0C3E-\u0C4C\u0CBE-\u0CCC\u0D3E-\u0D4C])/gu, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
@@ -88,8 +86,9 @@ export class VoiceCall {
    * @param {(name: string, args: object) => Promise<object>} options.onTool
    * @param {(event: object) => void} options.onUpdate UI updates
    */
-  constructor({ secret, microphone, mode = 'ontime', onTool, onUpdate }) {
-    Object.assign(this, { secret, microphone, mode, onTool, onUpdate });
+  constructor({ secret, microphone, mode = 'ontime', onTool, onUpdate, farewell }) {
+    // farewell: the two goodbye lines in the patient's language, for the safety-net goodbye.
+    Object.assign(this, { secret, microphone, mode, onTool, onUpdate, farewell });
     this.audio = new Audio();
     this.audio.autoplay = true;
     this.agentSpeaking = false;
@@ -353,7 +352,9 @@ export class VoiceCall {
     this.responseActive = true;
     this.send({ type: 'response.create', response: {
       tool_choice: 'none',
-      instructions: 'Say goodbye in Telugu using exactly one of these lines and nothing else. If you scheduled a callback: "సరే అండి. <N> నిమిషాల తర్వాత మళ్ళీ call చేస్తాను. జాగ్రత్తగా ఉండండి." Otherwise: "సరే అండి, అంతే. జాగ్రత్తగా ఉండండి. మళ్ళీ మాట్లాడదాం."',
+      instructions: this.farewell
+        ? `Say goodbye in ${this.farewell.language} using exactly one of these lines and nothing else. If you scheduled a callback: "${this.farewell.callback}" (put the real number of minutes for <N>). Otherwise: "${this.farewell.done}"`
+        : 'Say one short, warm goodbye in the language of this call. Do not ask a question.',
     } });
   }
 
