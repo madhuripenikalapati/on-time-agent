@@ -145,17 +145,18 @@ export class VoiceCall {
     this.onUpdate?.(event);
   }
 
-  requestResponse() {
+  requestResponse(response) {
     if (this.ending) return;
     if (this.responseActive) { this.wantResponse = true; return; }
     this.wantResponse = false;
     this.responseActive = true;
-    this.send({ type: 'response.create' });
+    this.send({ type: 'response.create', ...(response ? { response } : {}) });
   }
 
   // The caller said something: the agent owes them a spoken reply.
   callerTurn() {
     this.spokeSinceCaller = false;
+    this.waitingUntil = 0; // the patient is back
     this.requestResponse();
   }
 
@@ -327,7 +328,12 @@ export class VoiceCall {
       let output;
       try {
         // Guard: never record a dose the patient hasn't answered about yet.
-        if (call.name === 'record_dose' && askedJustNow) {
+        if (call.name === 'wait_for_patient') {
+          // The patient went to take the tablet: keep the line open quietly for up to two minutes.
+          this.waitingUntil = Date.now() + 120000;
+          output = { ok: true, note: 'Waiting quietly. Say nothing until the patient speaks.' };
+          if (!this.agentSpeaking) this.armIdle();
+        } else if (call.name === 'record_dose' && askedJustNow) {
           output = { ok: false, error: 'Not recorded: you just asked the question. Wait for the patient to answer, then record what they say.' };
           blocked = true;
           this.update({ type: 'guard', message: 'Blocked a dose record before the patient answered' });
@@ -340,8 +346,10 @@ export class VoiceCall {
       if (call.name === 'end_call') this.ending = true;
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: call.call_id, output: JSON.stringify(output) } });
     }
-    // After a blocked record the question is already out loud: wait for the patient.
-    if (!this.ending) { if (!blocked) this.requestResponse(); return; }
+    // After a blocked record the question is already out loud: wait for the patient. While
+    // waiting for the patient to fetch a tablet, don't prompt the agent to talk again.
+    const onlyWaiting = calls.every(call => call.name === 'wait_for_patient');
+    if (!this.ending) { if (!blocked && !(onlyWaiting && spoke)) this.requestResponse(); return; }
     setTimeout(() => this.hangUp('ended'), 15000); // safety net
     if (spoke) {
       // The agent already spoke since the caller's last reply; hang up once it has played.
@@ -368,6 +376,15 @@ export class VoiceCall {
   // line open: 7s after a closing statement, 25s after an unanswered question.
   armIdle() {
     this.clearIdle();
+    if (this.waitingUntil > Date.now()) {
+      // Waiting for the patient to take the tablet: after two minutes of quiet, ask once, kindly.
+      this.idleTimer = setTimeout(() => {
+        if (this.closed || this.ending || this.responseActive || this.agentSpeaking) return;
+        this.waitingUntil = 0;
+        this.requestResponse({ instructions: 'The patient went to take the medicine and has been quiet for two minutes. In their language, ask once, kindly, whether they took it. Do not call any tool yet.' });
+      }, this.waitingUntil - Date.now());
+      return;
+    }
     const asked = /[?？]\s*$/u.test(this.agentText.trim());
     this.idleTimer = setTimeout(() => {
       if (this.closed || this.ending || this.responseActive || this.agentSpeaking) return;

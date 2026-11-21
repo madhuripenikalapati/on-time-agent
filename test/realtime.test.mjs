@@ -182,3 +182,26 @@ test('the safety-net goodbye is in the patient\'s language', async () => {
   assert.doesNotMatch(goodbye.response.instructions, /[\u0C00-\u0C7F]/, 'no Telugu');
   call.hangUp();
 });
+
+test('"not yet": the agent waits on the line instead of hanging up, then asks once after two minutes', async () => {
+  mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  try {
+    const { call, sent, tools } = harness();
+    call.callerTurn(); // the patient said "ఇంకా వేసుకోలేదు అండి"
+    sent.length = 0;
+    call.handle({ type: 'response.done', response: { output: [said('పర్వాలేదు అండి. ఇప్పుడే వేసుకుంటారా? నేను line లోనే ఉంటాను.'), tool('wait_for_patient', {})] } });
+    await settle();
+    assert.equal(tools.length, 0, 'waiting is handled in the call, not on the server');
+    assert.equal(sent.some(e => e.type === 'response.create'), false, 'the agent stays quiet while the patient fetches the tablet');
+    call.handle({ type: 'output_audio_buffer.stopped' });
+    mock.timers.tick(30000);
+    assert.equal(sent.some(e => e.type === 'response.create'), false, 'no hang-up after 25 seconds of quiet');
+    mock.timers.tick(91000);
+    const nudge = sent.find(e => e.type === 'response.create');
+    assert.ok(nudge, 'after two minutes it asks once');
+    assert.match(nudge.response.instructions, /ask once/);
+    assert.equal(nudge.response.tool_choice, undefined, 'it does not force end_call');
+  } finally {
+    mock.timers.reset();
+  }
+});
