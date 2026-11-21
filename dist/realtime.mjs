@@ -18,7 +18,66 @@ export function cleanText(text, { caller = false } = {}) {
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
-const LONG_SPEECH_MS = 1300; // talking this long over the agent is never just "hmm"
+const LONG_SPEECH_MS = 2000; // still talking this long over the agent is never just "hmm"
+
+// Voice activity detection in the browser. OpenAI's own detector cuts the agent's audio the
+// moment it hears any sound (over WebRTC, even with interrupt_response off), which makes
+// "సరే while it talks" impossible. So the server's detector is off and this decides when
+// the caller starts and stops; only finished utterances are sent for transcription.
+export class VoiceDetector {
+  constructor(stream, { onStart, onEnd }) {
+    this.stream = stream;
+    Object.assign(this, { onStart, onEnd });
+    this.speaking = false;
+    this.voiced = 0;
+    this.lastVoiceAt = 0;
+    this.floor = 0.004;
+  }
+  async start() {
+    this.context = new AudioContext();
+    await this.context.resume();
+    this.analyser = this.context.createAnalyser();
+    this.analyser.fftSize = 1024;
+    this.context.createMediaStreamSource(this.stream).connect(this.analyser);
+    this.samples = new Float32Array(this.analyser.fftSize);
+    this.timer = setInterval(() => this.tick(), 20);
+  }
+  tick(now = performance.now()) {
+    this.analyser.getFloatTimeDomainData(this.samples);
+    let sum = 0;
+    for (const x of this.samples) sum += x * x;
+    this.level(Math.sqrt(sum / this.samples.length), now);
+  }
+  // One 20 ms reading of the microphone level.
+  level(rms, now) {
+    const threshold = Math.max(0.012, this.floor * 3);
+    if (rms > threshold) {
+      this.lastVoiceAt = now;
+      this.voiced += 20;
+      if (!this.speaking && this.voiced >= 100) {
+        this.speaking = true;
+        this.onStart?.();
+      }
+    } else {
+      if (!this.speaking) {
+        this.voiced = Math.max(0, this.voiced - 20);
+        this.floor = this.floor * 0.97 + rms * 0.03; // adapt to the room's background noise
+      }
+      if (this.speaking && now - this.lastVoiceAt > 850) { // elders pause mid-sentence
+        this.speaking = false;
+        this.voiced = 0;
+        this.onEnd?.();
+      }
+    }
+  }
+  isVoicing(now = performance.now()) {
+    return this.speaking && now - this.lastVoiceAt < 250;
+  }
+  stop() {
+    clearInterval(this.timer);
+    this.context?.close().catch(() => {});
+  }
+}
 
 export class VoiceCall {
   /**
@@ -39,6 +98,7 @@ export class VoiceCall {
     this.agentText = '';
     this.utterances = new Map(); // item_id -> { startedAt, agentSpeaking, yielded }
     this.current = null; // the caller utterance in progress
+    this.awaitingCommit = []; // finished utterances waiting for their conversation item id
     this.ending = false;
     this.closed = false;
   }
@@ -69,6 +129,12 @@ export class VoiceCall {
     if (!response.ok) throw new Error('Could not start the voice call (' + response.status + ').');
     await this.pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
     await opened;
+    this.detector = new VoiceDetector(this.microphone, { onStart: () => this.speechStarted(), onEnd: () => this.speechEnded() });
+    await this.detector.start();
+    // Drop silence (and any echo) that piles up in the input buffer between utterances.
+    this.hygiene = setInterval(() => {
+      if (!this.current && !this.awaitingCommit.length) this.send({ type: 'input_audio_buffer.clear' });
+    }, 1500);
     this.requestResponse(); // the agent speaks first
   }
 
@@ -139,36 +205,9 @@ export class VoiceCall {
         this.update({ type: 'agent-said', text: cleanText(event.transcript ?? this.agentText) });
         break;
 
-      case 'input_audio_buffer.speech_started': {
-        this.clearIdle();
-        const utterance = { startedAt: performance.now(), agentSpeaking: this.agentSpeaking, yielded: false };
-        this.utterances.set(event.item_id, utterance);
-        this.current = utterance;
-        this.update({ type: 'caller-speaking' });
-        if (!utterance.agentSpeaking) break;
-        if (this.mode === 'standard') {
-          // A typical voice bot: any sound stops it.
-          utterance.yielded = true;
-          this.yieldFloor();
-          break;
-        }
-        // On Time: lower the voice at once, like a person who hears you start to speak,
-        // and decide what you meant when your words arrive.
-        this.duck(true);
-        utterance.timer = setTimeout(() => {
-          if (this.current === utterance && this.agentSpeaking) {
-            utterance.yielded = true;
-            this.yieldFloor();
-            this.logTurn('(still speaking)', 'yield', 'long speech', utterance);
-          }
-        }, LONG_SPEECH_MS);
-        break;
-      }
-
-      case 'input_audio_buffer.speech_stopped': {
-        const utterance = this.utterances.get(event.item_id);
-        if (utterance) { utterance.stoppedAt = performance.now(); clearTimeout(utterance.timer); }
-        if (this.current === utterance) this.current = null;
+      case 'input_audio_buffer.committed': {
+        const utterance = this.awaitingCommit.shift();
+        if (utterance && event.item_id) this.utterances.set(event.item_id, utterance);
         break;
       }
 
@@ -200,6 +239,43 @@ export class VoiceCall {
         }
         break;
     }
+  }
+
+  // The caller started speaking (from our voice detector).
+  speechStarted() {
+    this.clearIdle();
+    const utterance = { startedAt: performance.now(), agentSpeaking: this.agentSpeaking, yielded: false };
+    this.current = utterance;
+    this.update({ type: 'caller-speaking' });
+    if (!utterance.agentSpeaking) return;
+    if (this.mode === 'standard') {
+      // A typical voice bot: any sound stops it.
+      utterance.yielded = true;
+      this.yieldFloor();
+      return;
+    }
+    // On Time: lower the voice at once, like a person who hears you start to speak,
+    // and decide what you meant when your words arrive.
+    this.duck(true);
+    utterance.timer = setTimeout(() => {
+      const stillTalking = this.detector ? this.detector.isVoicing() : this.current === utterance;
+      if (this.current === utterance && stillTalking && this.agentSpeaking) {
+        utterance.yielded = true;
+        this.yieldFloor();
+        this.logTurn('(still speaking)', 'yield', 'long speech', utterance);
+      }
+    }, LONG_SPEECH_MS);
+  }
+
+  // The caller stopped: send exactly this utterance for transcription.
+  speechEnded() {
+    const utterance = this.current;
+    if (!utterance) return;
+    utterance.stoppedAt = performance.now();
+    clearTimeout(utterance.timer);
+    this.current = null;
+    this.awaitingCommit.push(utterance);
+    this.send({ type: 'input_audio_buffer.commit' });
   }
 
   decide(itemId, transcript) {
@@ -277,7 +353,7 @@ export class VoiceCall {
     this.responseActive = true;
     this.send({ type: 'response.create', response: {
       tool_choice: 'none',
-      instructions: 'Speak only Telugu, written in Telugu script (తెలుగు), never any other language. Say one short, warm goodbye sentence that mentions what happens next (for example the callback time, or that the family will be told). Do not ask a question.',
+      instructions: 'Say goodbye in Telugu using exactly one of these lines and nothing else. If you scheduled a callback: "సరే అండి. <N> నిమిషాల తర్వాత మళ్ళీ call చేస్తాను. జాగ్రత్తగా ఉండండి." Otherwise: "సరే అండి, అంతే. జాగ్రత్తగా ఉండండి. మళ్ళీ మాట్లాడదాం."',
     } });
   }
 
@@ -319,6 +395,8 @@ export class VoiceCall {
     if (this.closed) return;
     this.closed = true;
     this.clearIdle();
+    clearInterval(this.hygiene);
+    this.detector?.stop();
     try { this.channel?.close(); } catch {}
     try { this.pc?.close(); } catch {}
     this.audio.srcObject = null;

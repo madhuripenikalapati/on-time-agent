@@ -39,6 +39,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
   let flushTimer = null;
   let clockTimer = null;
   let advancing = false;
+  let unanswered = null;
 
   const phone = h('div', { class: 'phone' });
   root.append(h('div', { class: 'phone-page' }, phone));
@@ -46,6 +47,9 @@ export function mountPhone(root, id, { stage = false } = {}) {
   const poller = poll(id, fresh => {
     data = fresh;
     if (screen === 'idle' && data.ring) ring();
+    // Opened from a call alert (or already ringing): go straight to the ringing screen.
+    // The Answer tap itself unlocks audio and the microphone.
+    if (screen === 'locked' && data.ring) { screen = 'ringing'; render(); }
     if (screen === 'ringing' && !data.ring) stopRinging('idle');
     if (screen === 'idle' && data.followUp && data.followUp.at <= data.serverTime && !advancing) {
       advancing = true;
@@ -68,7 +72,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       return [h('div', { class: 'center' },
         h('div', { class: 'orb' }, icon('logo')),
         h('div', { class: 'greet te' }, T.hello(name)),
-        h('button', { class: 'btn ready-btn te', onclick: unlock }, T.ready),
+        h('button', { class: 'btn ready-btn te', onclick: () => unlock() }, T.ready),
         h('div', { class: 'soft small' }, T.readyEn),
         error ? h('div', { class: 'error-banner' }, error) : null)];
     }
@@ -81,7 +85,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
         next ? h('div', { class: 'next' }, h('span', { class: 'soft small te' }, T.next), h('strong', { class: 'next-name' }, next.name), h('span', { class: 'soft small' }, [next.brand, next.amount, next.when].filter(Boolean).join(' · '))) : null,
         data?.followUp ? h('div', { class: 'soft small' }, 'Follow-up call at ' + time(data.followUp.at)) : null,
       ),
-      stage ? null : h('div', { class: 'call-foot' }, h('span', { class: 'soft small' }, 'Keep this screen open'))];
+      stage ? null : setupCard()];
     }
     if (screen === 'ringing') {
       return [h('div', { class: 'center' },
@@ -123,7 +127,9 @@ export function mountPhone(root, id, { stage = false } = {}) {
     const weekday = new Date(data.serverTime + 5.5 * 3600e3).getUTCDay();
     const open = data.medicines.filter(m => runsOn(m.days, weekday) && taken[m.id]?.status !== 'taken')
       .sort((a, b) => order.indexOf(slotOf(a)) - order.indexOf(slotOf(b)));
-    const m = open[0];
+    // The next one by time of day; earlier ones still open come after (they were missed).
+    const now = order.indexOf(data.slot);
+    const m = open.find(x => order.indexOf(slotOf(x)) >= now) ?? open[0];
     return m ? { name: m.nickname || m.name, brand: m.nickname ? m.name : '', amount: m.amount, when: (m.timing === 'before' ? 'Before ' : m.timing === 'after' ? 'After ' : 'At ') + (m.timing === 'fixed' ? m.time : m.meal) } : null;
   }
 
@@ -133,19 +139,65 @@ export function mountPhone(root, id, { stage = false } = {}) {
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   }
 
-  async function unlock() {
+  // ---- Install as an app, and turn on call alerts (push) ----
+  let installEvent = null;
+  let alertsOn = false;
+  let setupMessage = '';
+  const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  window.addEventListener('beforeinstallprompt', event => { event.preventDefault(); installEvent = event; if (screen === 'idle') render(); });
+  if (!stage) {
+    try { localStorage.setItem('on-time:phone', id); } catch {}
+    caches?.open('on-time').then(cache => cache.put('/__household', new Response(id))).catch(() => {});
+    navigator.serviceWorker?.ready.then(reg => reg.pushManager?.getSubscription()).then(sub => { alertsOn = Boolean(sub) && Notification.permission === 'granted'; if (screen === 'idle') render(); }).catch(() => {});
+  }
+
+  async function turnOnAlerts() {
+    setupMessage = '';
+    try {
+      if (!('PushManager' in window) || !navigator.serviceWorker) {
+        throw new Error(isIos && !standalone() ? 'On iPhone, first add On Time to the Home Screen (Share → Add to Home Screen), then open it from there.' : 'This browser cannot show call alerts.');
+      }
+      if (await Notification.requestPermission() !== 'granted') throw new Error('Alerts were not allowed. Allow notifications for this site in settings.');
+      const { publicKey } = await (await fetch('/api/push-key')).json();
+      const reg = await navigator.serviceWorker.ready;
+      const subscription = (await reg.pushManager.getSubscription())
+        ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: publicKey });
+      const response = await fetch('/api/h/' + id + '/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription: subscription.toJSON() }) });
+      if (!response.ok) throw new Error((await response.json()).error || 'Could not turn on alerts.');
+      alertsOn = true;
+      setupMessage = 'Call alerts are on. The phone will ring at medicine time, even if this app is closed.';
+    } catch (error) {
+      setupMessage = error.message;
+    }
+    render();
+  }
+
+  function setupCard() {
+    const install = !standalone() && (installEvent
+      ? h('button', { class: 'btn', onclick: async () => { installEvent.prompt(); await installEvent.userChoice.catch(() => {}); installEvent = null; render(); } }, '📲 Install On Time app')
+      : isIos ? h('div', { class: 'soft small' }, '📲 To install: Share → Add to Home Screen') : null);
+    return h('div', { class: 'setup' },
+      install,
+      alertsOn
+        ? h('div', { class: 'setup-ok' }, '🔔 Call alerts on')
+        : h('button', { class: 'btn', onclick: turnOnAlerts }, '🔔 Turn on call alerts'),
+      setupMessage ? h('div', { class: 'soft small' }, setupMessage) : null);
+  }
+
+  async function unlock(quiet = false) {
     error = '';
     try {
       audioContext = new (window.AudioContext || window.webkitAudioContext)();
       await audioContext.resume();
       microphone = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       screen = 'idle';
-      clockTimer = setInterval(() => { if (screen === 'idle') render(); }, 15000);
+      clockTimer ??= setInterval(() => { if (screen === 'idle') render(); }, 15000);
     } catch (e) {
       error = e?.name === 'NotAllowedError' ? T.noMic : 'Could not start audio: ' + e.message;
     }
     render();
-    if (data?.ring) ring();
+    if (!quiet && data?.ring) ring();
   }
 
   // Indian ring cadence: 400/450 Hz, 0.4s on, 0.2s off, 0.4s on, 2s off.
@@ -165,25 +217,38 @@ export function mountPhone(root, id, { stage = false } = {}) {
       }
     };
     const cycle = () => { const t = audioContext.currentTime; burst(t); burst(t + 0.6); };
+    // Nobody picked up within 45 seconds: a missed call.
+    clearTimeout(unanswered);
+    unanswered = setTimeout(async () => {
+      if (screen !== 'ringing') return;
+      stopRinging('idle');
+      try { data = await api.missed(id, 'no_answer'); } catch {}
+      render();
+    }, 45000);
     cycle();
     ringer = setInterval(cycle, 3000);
-    navigator.vibrate?.([400, 200, 400, 2000, 400, 200, 400]);
+    if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.([400, 200, 400, 2000, 400, 200, 400]);
   }
 
   function stopRinging(next) {
+    clearTimeout(unanswered);
     clearInterval(ringer);
     ringer = null;
-    navigator.vibrate?.(0);
+    if (navigator.userActivation?.hasBeenActive) navigator.vibrate?.(0);
     if (next) { screen = next; render(); }
   }
 
   async function decline() {
     stopRinging('idle');
-    try { data = await api.cancelRing(id); } catch {}
+    try { data = await api.missed(id, 'declined'); } catch {}
     render();
   }
 
   async function answer() {
+    if (!microphone) {
+      await unlock(true);
+      if (!microphone) { screen = 'locked'; render(); return; }
+    }
     stopRinging('connecting');
     error = '';
     caption = '';

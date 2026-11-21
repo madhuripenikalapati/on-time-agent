@@ -53,6 +53,11 @@ Resources:
         - DynamoDBCrudPolicy:
             TableName: !Ref Households
       Events:
+        Tick:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Description: Ring phones at medicine time, for follow-ups, and mark missed calls
         Root:
           Type: HttpApi
           Properties:

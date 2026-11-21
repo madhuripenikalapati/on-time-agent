@@ -8,9 +8,16 @@
 2. **A real Telugu phone conversation.** At the scheduled time, the patient's phone rings. A Realtime voice agent (`gpt-realtime` over WebRTC) holds a natural Telugu conversation grounded in the saved plan. It can record a dose, show the pack, schedule a callback and alert the family through tool calls.
 3. **The family sees it live.** The dashboard (any device) shows each dose as the patient reports it, the live transcript, alerts such as a pack mix-up or a new symptom, refill dates, and an English summary of every call.
 
+## An app on the parent's phone, with alarm-style call alerts
+
+- **Install:** open the parent's phone link (`?h=<id>&view=phone`) on their phone. On Android, tap **Install On Time app**. On iPhone, use Share → Add to Home Screen, then open it from the home screen.
+- **Turn on call alerts** on that screen (one permission prompt). From then on the phone buzzes like an incoming call, even when the app is closed. Tapping the alert opens the ringing screen; one tap on **ఎత్తండి** answers.
+- **Automatic calls:** an EventBridge rule runs every minute. At each medicine time (the earliest time among that part of the day's medicines) it rings the phone, unless those doses are already reported taken. A ring nobody answers for 3 minutes becomes a missed call, and a follow-up rings later if the family allowed it. Follow-ups after a meal or an untaken dose ring automatically too. **Call now** on the family dashboard uses the same alert.
+- Alerts are Web Push with no payload: the push only wakes the phone, which then asks the server who is calling. Only a signed VAPID token is needed (Node's built-in crypto, no libraries). Push addresses are never sent back to browsers.
+
 ## Avunu ≠ Aagandi: Telugu turn-taking
 
-Standard voice bots treat every sound the same. They stop on every "హ్మ్", or they talk over a real "ఆగండి". On Time runs its own turn-taking layer (`dist/turns.mjs`, `dist/realtime.mjs`) on top of the Realtime model. The server is configured to neither auto-reply nor auto-interrupt.
+Standard voice bots treat every sound the same. They stop on every "హ్మ్", or they talk over a real "ఆగండి". On Time runs its own turn-taking layer (`dist/turns.mjs`, `dist/realtime.mjs`) on top of the Realtime model. OpenAI's server voice detector is switched off, because over WebRTC it cuts the agent's audio on any sound, even with `interrupt_response` off. The browser detects when the caller starts and stops speaking, lowers the agent's voice at once, and sends each finished utterance for Telugu transcription. Then it decides: a listening sound means keep going, and anything else means yield.
 
 | The caller says | While the agent is… | On Time | A standard bot |
 |---|---|---|---|
@@ -38,7 +45,7 @@ node server.mjs                      # http://localhost:8091
 node --test test/*.test.mjs
 ```
 
-Open `/` and choose **Try the demo family**. That opens the **stage** view: the patient's phone on the left and the family dashboard on the right, which is the best layout for a projector. Use **Call Lakshmi now**, then answer on the phone. Voice calls need a microphone and Chrome, Edge or Safari. Open the phone view on a real phone with `?h=<id>&view=phone`.
+Run `node --test test/*.test.mjs` (43 tests). Open `/` and choose **Try the demo family**. That opens the **stage** view: the patient's phone on the left and the family dashboard on the right, which is the best layout for a projector. Use **Call Lakshmi now**, then answer on the phone. Voice calls need a microphone and Chrome, Edge or Safari. Open the phone view on a real phone with `?h=<id>&view=phone`.
 
 ## Deploy (AWS)
 
@@ -65,3 +72,6 @@ From AWS CloudShell, upload `on-time-agent-deploy.zip`, unzip it, and run the sa
 | `lib/openai.mjs` | Realtime client secrets and prescription reading |
 | `lib/api.mjs` | HTTP API shared by `server.mjs` (local) and `aws.mjs` (Lambda) |
 | `lib/store.mjs` | File store (local) and DynamoDB store with optimistic locking and quotas |
+| `lib/scheduler.mjs` | Every-minute scheduler: medicine-time rings, follow-ups, missed calls |
+| `lib/push.mjs` | Payload-free Web Push with VAPID |
+| `dist/sw.js`, `dist/manifest.webmanifest` | Installable app and the call-style alert |

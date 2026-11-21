@@ -95,6 +95,7 @@ export const api = {
   savePlan: (id, plan) => call('PUT', '/api/h/' + id + '/plan', plan),
   ring: (id, body) => call('POST', '/api/h/' + id + '/ring', body),
   cancelRing: id => call('POST', '/api/h/' + id + '/cancel-ring', {}),
+  missed: (id, reason) => call('POST', '/api/h/' + id + '/missed', { reason }),
   advance: id => call('POST', '/api/h/' + id + '/advance', {}),
   cancelFollowUp: id => call('POST', '/api/h/' + id + '/cancel-followup', {}),
   resolve: (id, alertId) => call('POST', '/api/h/' + id + '/alerts/' + alertId + '/resolve', {}),

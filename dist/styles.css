@@ -280,3 +280,9 @@ h1, h2, h3, p { margin: 0; }
 
 .page { position: relative; }
 .remove-page { position: absolute; top: -6px; right: -6px; width: 24px; height: 24px; border-radius: 50%; border: 0; background: var(--ink); color: #fff; cursor: pointer; font-size: 15px; line-height: 1; }
+
+.phone .setup { display: grid; gap: 10px; justify-items: center; margin-top: auto; text-align: center; }
+.phone .setup .btn { width: 100%; max-width: 300px; }
+.setup-ok { color: #a7f3d0; font-weight: 650; }
+
+.hero .phone-status { margin-top: 10px; font-size: .9rem; background: rgb(255 255 255 / 10%); border-radius: 12px; padding: 8px 12px; }

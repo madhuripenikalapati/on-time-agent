@@ -95,11 +95,19 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const hero = h('section', { class: 'card hero' },
       h('div', { class: 'label' }, new Date(data.serverTime).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })),
       h('h2', {}, headline),
-      h('div', { class: 'meta' }, call ? 'Last check-in ' + ago(call.startedAt, data.serverTime) + (call.status === 'failed' ? ' · didn’t connect' : '') : 'No check-in calls yet'),
+      h('div', { class: 'phone-status' },
+        data.phones
+          ? '🔔 ' + name + '’s phone has call alerts on' + (data.settings.autoCalls !== false && data.nextCall ? ' · next automatic call at ' + data.nextCall.time + ' (' + slotLabel[data.nextCall.slot].toLowerCase() + ')' : data.settings.autoCalls === false ? ' · automatic calls are off' : '')
+          : '📵 ' + name + '’s phone isn’t set up yet: open ' + name + '’s phone link on her phone and tap “Turn on call alerts”.'),
+      h('div', { class: 'meta' }, call ? 'Last check-in ' + ago(call.startedAt, data.serverTime) + ({ failed: ' · didn’t connect', missed: ' · not answered', declined: ' · ' + name + ' declined' }[call.status] ?? '') : 'No check-in calls yet'),
       h('div', { class: 'row' },
         data.ring
           ? h('button', { class: 'btn', onclick: () => act(() => api.cancelRing(id)) }, 'Cancel call')
-          : h('button', { class: 'btn primary', disabled: live() || !data.medicines.length, onclick: () => act(() => api.ring(id, { slot: slotSelect.value }), 'Calling ' + name + '’s phone') }, icon('phone'), 'Call ' + name + ' now'),
+          : h('button', { class: 'btn primary', disabled: live() || !data.medicines.length, onclick: () => act(async () => {
+              const result = await api.ring(id, { slot: slotSelect.value });
+              toast(result.phonesRung ? 'Calling ' + name + '’s phone · alert sent' : 'Ringing ' + name + '’s phone screen');
+              return result;
+            }) }, icon('phone'), 'Call ' + name + ' now'),
         slotSelect,
         h('a', { class: 'btn', href: phoneUrl(), target: '_blank', rel: 'noopener' }, 'Open ' + name + '’s phone ↗'),
       ),
@@ -207,7 +215,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         h('div', { class: 'row' },
           h('strong', {}, dateTime(call.startedAt)),
           h('span', { class: 'pill' }, call.kind === 'followup' ? 'Follow-up' : slotLabel[call.slot] + ' check-in'),
-          h('span', { class: 'pill ' + ({ live: 'live', ended: 'good', failed: 'bad' }[call.status] ?? '') }, { live: 'LIVE', ended: duration(call), failed: 'Didn’t connect' }[call.status] ?? call.status)),
+          h('span', { class: 'pill ' + ({ live: 'live', ended: 'good', failed: 'bad', missed: 'warn', declined: 'warn' }[call.status] ?? '') }, { live: 'LIVE', ended: duration(call), failed: 'Didn’t connect', missed: 'Not answered', declined: 'Declined' }[call.status] ?? call.status)),
         call.summary ? h('p', {}, call.summary) : null,
         call.outcomes.length ? h('div', { class: 'row' }, call.outcomes.map(o => {
           const med = data.medicines.find(m => m.id === o.medicineId);
@@ -265,6 +273,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
       let size = 0;
       for (const page of prepared) {
         const bytes = page.data.length * 0.75;
+        // A PDF always goes on its own: mixed with photos, the model tends to read only the photos.
+        if (page.type === 'application/pdf') { if (current.length) groups.push(current); groups.push([page]); current = []; size = 0; continue; }
         if (current.length && (current.length === 4 || size + bytes > 3_000_000)) { groups.push(current); current = []; size = 0; }
         current.push(page);
         size += bytes;
@@ -340,6 +350,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const caregiverName = h('input', { value: editor.patient.caregiverName, maxlength: 40, placeholder: 'e.g. Ravi' });
     const followMinutes = h('input', { type: 'number', min: 1, max: 180, value: editor.settings.followUpMinutes });
     const allowFollow = h('input', { type: 'checkbox', checked: editor.settings.allowFollowUp });
+    const autoCalls = h('input', { type: 'checkbox', checked: editor.settings.autoCalls !== false });
     const share = h('input', { type: 'checkbox', checked: editor.settings.shareWithFamily });
 
     const save = h('button', { class: 'btn primary', onclick: async () => {
@@ -347,7 +358,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       const missing = editor.medicines.find(m => !m.name || !m.meal || !m.timing || !m.days);
       if (missing) { toast('Fill the name, meal, timing and days for ' + (missing.name || 'every medicine') + '.', 'bad'); return; }
       editor.patient = { ...editor.patient, name: patientName.value.trim() || 'Amma', caregiverName: caregiverName.value.trim() };
-      editor.settings = { followUpMinutes: Number(followMinutes.value) || 30, allowFollowUp: allowFollow.checked, shareWithFamily: share.checked };
+      editor.settings = { followUpMinutes: Number(followMinutes.value) || 30, allowFollowUp: allowFollow.checked, shareWithFamily: share.checked, autoCalls: autoCalls.checked };
       save.disabled = true;
       try {
         data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, ...m }) => m) });
@@ -377,6 +388,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
           h('div', { class: 'settings' },
             field('Patient’s name', patientName), field('Your name (shown to the agent)', caregiverName), field('Call back after (minutes)', followMinutes)),
           h('div', { class: 'stack' },
+            h('label', { class: 'check' }, autoCalls, 'Call automatically at each medicine time'),
             h('label', { class: 'check' }, allowFollow, 'Allow a follow-up call if a dose isn’t taken yet'),
             h('label', { class: 'check' }, share, 'Share call results with family'))),
         h('div', { class: 'savebar' }, h('label', { class: 'check' }, reviewed, 'I checked this against the prescription'), save),

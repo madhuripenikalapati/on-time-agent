@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  newHousehold, setPlan, dueMedicines, startCall, callEvent, requestCall, advanceFollowUp, istDate, slotOf, unitsPerDose,
+  newHousehold, setPlan, dueMedicines, startCall, callEvent, requestCall, advanceFollowUp, istDate, slotOf, unitsPerDose, missedCall,
 } from '../lib/household.mjs';
 import { buildAgent } from '../lib/agent.mjs';
 import { demoPlan } from '../lib/api.mjs';
@@ -120,4 +120,48 @@ test('a weekly dose is only due on its day, and an unknown schedule is refused',
   const monday = Date.parse('2026-11-23T04:00:00Z');
   assert.equal(dueMedicines(doc, 'morning', monday).length, 1);
   assert.throws(() => setPlan(doc, { medicines: [{ name: 'Uprise D3 60K', days: 'weekly' }] }), /which days/);
+});
+
+test('a symptom alert is never pinned to a medicine, a pack alert is', () => {
+  const doc = household();
+  const call = startCall(doc, { slot: 'morning' }, morning);
+  const [telma] = doc.medicines;
+  callEvent(doc, call.id, { type: 'alert', kind: 'emergency', note: 'chest pain', medicineId: telma.id }, morning);
+  callEvent(doc, call.id, { type: 'alert', kind: 'pack_mismatch', note: 'label differs', medicineId: telma.id }, morning);
+  assert.equal(doc.alerts.find(a => a.kind === 'emergency').medicineId, null);
+  assert.equal(doc.alerts.find(a => a.kind === 'pack_mismatch').medicineId, telma.id);
+});
+
+test('a declined call is logged and brings a follow-up when allowed', () => {
+  const doc = household();
+  requestCall(doc, { slot: 'morning' }, morning);
+  missedCall(doc, { reason: 'declined' }, morning);
+  assert.equal(doc.ring, null);
+  assert.equal(doc.calls[0].status, 'declined');
+  assert.equal(doc.followUp.at, morning + 30 * 60_000);
+  doc.settings.allowFollowUp = false;
+  doc.followUp = null;
+  requestCall(doc, { slot: 'morning' }, morning);
+  missedCall(doc, { reason: 'no_answer' }, morning);
+  assert.equal(doc.calls[0].status, 'missed');
+  assert.equal(doc.followUp, null);
+});
+
+test('a callback after a declined call greets afresh and still asks about the meal', () => {
+  const doc = household();
+  requestCall(doc, { slot: 'morning' }, morning);
+  missedCall(doc, { reason: 'declined' }, morning);
+  advanceFollowUp(doc, morning);
+  const agent = buildAgent(doc, startCall(doc, {}, morning));
+  assert.match(agent.instructions, /మళ్ళీ call చేస్తున్నాను/);
+  assert.doesNotMatch(agent.instructions, /Greeting: "[^"]*ఇందాక/);
+  assert.match(agent.instructions, /ask the breakfast meal question/);
+});
+
+test('"1-0-1" in the dose field becomes a tablet count for that meal', async () => {
+  const { fixAmount } = await import('../lib/openai.mjs');
+  assert.equal(fixAmount({ amount: '1-0-1', meal: 'dinner' }).amount, '1 tablet');
+  assert.equal(fixAmount({ amount: '½-0-0', meal: 'breakfast' }).amount, '½ tablet');
+  assert.equal(fixAmount({ amount: '0-2-0', meal: 'lunch' }).amount, '2 tablets');
+  assert.equal(fixAmount({ amount: '1 tablet', meal: 'lunch' }).amount, '1 tablet');
 });

@@ -4,6 +4,14 @@ import { mountPhone } from './phone.mjs';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
+
+// The installed app opens on the parent's phone screen.
+if (params.get('app') === '1') {
+  let phone = null;
+  try { phone = localStorage.getItem('on-time:phone'); } catch {}
+  if (phone) location.replace('?h=' + phone + '&view=phone');
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const id = params.get('h');
 const view = params.get('view');
 const remembered = (() => { try { return localStorage.getItem('on-time:last'); } catch { return null; } })();
