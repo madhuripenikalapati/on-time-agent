@@ -229,11 +229,31 @@ export function mountFamily(root, id, { stage = false } = {}) {
     });
   }
 
+  // Copy works even where the clipboard API is blocked (older iOS, embedded browsers): fall back
+  // to selecting the text in a hidden box, and if that fails too, select the visible link.
+  async function copyText(text, shown) {
+    try { await navigator.clipboard.writeText(text); return true; } catch {}
+    const box = h('textarea', { readonly: true, class: 'offscreen' });
+    box.value = text;
+    document.body.append(box);
+    box.select();
+    box.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    box.remove();
+    if (!ok && shown) { const range = document.createRange(); range.selectNodeContents(shown); getSelection().removeAllRanges(); getSelection().addRange(range); }
+    return ok;
+  }
+
   function copyRow(label, url) {
-    return h('div', {},
+    const shown = h('code', {}, url);
+    return h('div', { class: 'share-row' },
       h('div', { class: 'small muted' }, label),
-      h('div', { class: 'share-link' }, h('code', {}, url),
-        h('button', { class: 'btn small', onclick: async () => { await navigator.clipboard?.writeText(url); toast('Link copied'); } }, icon('copy'), 'Copy')));
+      h('div', { class: 'share-link' }, shown),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', onclick: async () => toast(await copyText(url, shown) ? 'Link copied' : 'Link selected: press and hold to copy it') }, icon('copy'), 'Copy'),
+        navigator.share ? h('button', { class: 'btn small', onclick: () => navigator.share({ title: 'On Time', text: label, url }).catch(() => {}) }, 'Share…') : null,
+        h('a', { class: 'btn small ghost', href: url, target: '_blank', rel: 'noopener' }, 'Open')));
   }
 
   // ---------- Calls ----------

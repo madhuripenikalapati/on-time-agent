@@ -124,8 +124,12 @@ h1, h2, h3, p { margin: 0; }
 
 /* Share */
 .share { display: grid; gap: 10px; }
-.share-link { display: flex; gap: 8px; align-items: center; background: #f3efe6; border-radius: 12px; padding: 8px 8px 8px 12px; }
-.share-link code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .85rem; }
+.share, .share-row { min-width: 0; }
+.share-row { display: grid; gap: 6px; }
+.share-link { background: #f3efe6; border-radius: 12px; padding: 8px 12px; min-width: 0; }
+.share-link code { display: block; font-size: .8rem; overflow-wrap: anywhere; word-break: break-all; user-select: all; -webkit-user-select: all; }
+.offscreen { position: fixed; top: -1000px; left: 0; opacity: 0; }
+.grid > .stack, .card { min-width: 0; }
 
 /* Medicines editor */
 .dropzone { border: 2px dashed #cfc6b4; border-radius: 16px; padding: 22px; text-align: center; background: #fbf9f4; cursor: pointer; display: grid; gap: 6px; }
