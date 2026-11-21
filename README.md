@@ -18,12 +18,12 @@
 |---|---|---|
 | Live Telugu call (listen, talk, tools, summary) | `gpt-realtime-2.1`, voice `marin`, a little slower for elders | Newest realtime model; much better Telugu than the original `gpt-realtime`. Voice chosen by recording 3 Telugu phrasebook lines in all 10 voices, transcribing them back for clarity, and having `gpt-audio-1.5` rank them head to head for native-sounding Telugu: `marin` scored highest overall |
 | Turning the caller's speech into text | `gpt-transcribe`, Telugu | Newest transcription model |
-| Reading prescriptions (photos, PDFs) | `gpt-5.2`, medium reasoning (low for PDFs) | On four real prescriptions (faint pencil, eye drops, a pharmacy label, blurry French handwriting) it guessed less and explained shorthand ("stat", "8hrly", "nocte", "for 5 days") |
+| Reading prescriptions (photos, PDFs) | `gpt-5.6-sol`, low reasoning, **read three times and voted** | On a real handwritten Indian prescription (8 medicines), seven models were compared. `gpt-5.2` called Met XL 50 (a BP tablet) a "Sugar tablet"; `gpt-5.6-sol` got it right in every run. Single readings still slipped now and then on look-alike names, so each page is read three times at once and the code takes the majority. A line the readings disagree on is highlighted with all three readings and gets no simple name until the family checks it. 16–21 s per page |
 | Simple names ("Sugar tablet") and "used for" | `gpt-5.2`, low reasoning | `gpt-4.1-mini` called an antibiotic (Lyncipro) a "Sugar tablet"; `gpt-5.2` didn't |
 | Pack scanning (match + tablets left) | `gpt-5.2` with grid counting | 6/6 on real pack photos; `gpt-4.1` missed two |
 | Turn-taking (Avunu ≠ Aagandi) | No model: rules in the browser | Instant and the same every time |
 
-Each prescription page is read in its own request, all pages in parallel. Real pages took 9–18 s each, under the 30 s request limit. Two pages per request took up to 24 s, which was too close.
+Each prescription page is read in its own request, all pages in parallel, and the three readings of a page also run in parallel. Real pages took 6–21 s each, under the 30 s request limit.
 
 ## Tested on real pack photos
 

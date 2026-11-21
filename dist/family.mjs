@@ -351,12 +351,13 @@ export function mountFamily(root, id, { stage = false } = {}) {
         editor.medicines = unique.map(row => ({
           name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '',
           nickname: row.nickname ?? '', use: row.use ?? '', aiNickname: Boolean(row.nickname || row.use),
-          meal: row.meal ?? '', timing: row.timing ?? '', time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '',
+          meal: row.meal ?? '', timing: row.timing ?? '', time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '', doubt: row.doubt ?? '',
           courseDays: /^\d{1,3}$/.test(String(row.duration_days ?? '')) && +row.duration_days >= 1 && +row.duration_days <= 365 ? +row.duration_days : '',
         }));
         reviewed.checked = false;
         drawList();
-        await suggestNames(editor.medicines.filter(m => !m.nickname || !m.use));
+        // A name the readings disagreed on gets no suggestion until the family corrects it.
+        await suggestNames(editor.medicines.filter(m => !m.doubt && (!m.nickname || !m.use)));
         status.replaceChildren(h('p', { class: 'notice' }, '✨ Drafted ' + unique.length + ' medicine' + (unique.length > 1 ? 's' : '') + ' from ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '. Check every highlighted field against the prescription, then save.' + (notes.length ? ' Note: ' + notes.join(' ') : '')));
       } catch (error) {
         status.replaceChildren(h('p', { class: 'notice bad' }, error.message));
@@ -491,7 +492,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
     } }, 'Save plan');
 
     drawList();
-    const missingNames = editor.medicines.filter(m => !m.nickname || !m.use);
+    const missingNames = editor.medicines.filter(m => !m.doubt && (!m.nickname || !m.use));
     if (missingNames.length) suggestNames(missingNames);
     const names = ['BP tablet', 'Sugar tablet', 'Cholesterol tablet', 'Thyroid tablet', 'Heart tablet', 'Kidney tablet', 'B12 tablet', 'Vitamin D tablet', 'Calcium tablet', 'Iron tablet', 'Gas tablet', 'Pain tablet', 'Sleep tablet', 'Blood thinner', 'Antibiotic'];
     return h('div', {},
@@ -500,7 +501,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       h('div', { class: 'stack' },
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Prescription')), drop, pages, h('div', { class: 'row' }, readButton), status),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine packs at home'), h('p', { class: 'hint' }, 'Optional, but it makes the “which tablet?” moment work with her own strips.'))), packDrop, packThumbs, h('div', { class: 'row' }, scanButton), packStatus),
-        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine plan'), h('p', { class: 'hint' }, 'Highlighted fields were unclear or missing. The simple name is what On Time says on the call (“Sugar tablet”), so Amma doesn’t need to read brand names.'))), list),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine plan'), h('p', { class: 'hint' }, 'Highlighted fields were unclear or missing. The simple name is what On Time says on the call (“Sugar tablet”), so nobody has to read brand names on the call.'))), list),
         h('section', { class: 'card' }, h('h2', {}, 'Calls'), h('p', { class: 'hint' }, 'How On Time talks to ' + data.patient.name + '.'),
           h('div', { class: 'settings' },
             h('div', { class: 'field wide' }, 'Family', h('div', { class: 'family-line' },
@@ -625,7 +626,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
           m.photo ? h('img', { src: m.photo, alt: 'Pack photo' }) : h('span', { class: 'add' }, icon('camera'), h('br'), 'Add pack photo')),
         m.photo ? h('button', { class: 'btn small ghost', onclick: () => { m.photo = ''; redraw(); } }, 'Remove photo') : null),
       h('div', { class: 'fields' },
-        f('Medicine (as written)', input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: () => { if (!m.nickname || m.aiNickname) suggestNamesFor([m]); } }), 'name', 'wide'),
+        h('label', { class: 'field wide' + (!m.name || m.doubt ? ' missing' : '') }, m.doubt ? 'Medicine · AI readings differ (' + m.doubt + '), please check' : 'Medicine (as written)',
+          input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: event => { m.doubt = ''; event.target.closest('.field')?.classList.toggle('missing', !m.name); if (!m.nickname || m.aiNickname) suggestNamesFor([m]); } })),
         f(m.aiNickname ? 'Simple name · AI suggested, please check' : 'Simple name (what they call it)', input('nickname', { placeholder: 'e.g. Sugar tablet', maxlength: 40, list: 'nicknames', oninput: event => { m.nickname = event.target.value; m.aiNickname = false; } }), 'nickname', 'wide' + (m.aiNickname ? ' suggested' : '')),
         f('Strength', input('strength', { placeholder: '40 mg', maxlength: 40 }), 'strength'),
         f('Dose', input('amount', { placeholder: '1 tablet', maxlength: 40 }), 'amount'),
