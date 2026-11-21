@@ -160,7 +160,14 @@ export function mountPhone(root, id, { stage = false } = {}) {
   if (!stage) {
     try { localStorage.setItem('on-time:phone', id); } catch {}
     caches?.open('on-time').then(cache => cache.put('/__household', new Response(id))).catch(() => {});
-    navigator.serviceWorker?.ready.then(reg => reg.pushManager?.getSubscription()).then(sub => { alertsOn = Boolean(sub) && Notification.permission === 'granted'; if (screen === 'idle') render(); }).catch(() => {});
+    // A phone that already allowed alerts (maybe for another family, or before a failed save) shows
+    // "Call alerts on", so register it with this family every time the app opens. It is idempotent.
+    navigator.serviceWorker?.ready.then(reg => reg.pushManager?.getSubscription()).then(async sub => {
+      if (!sub || Notification.permission !== 'granted') return;
+      const response = await fetch('/api/h/' + id + '/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ subscription: sub.toJSON() }) });
+      alertsOn = response.ok;
+      if (screen === 'idle') render();
+    }).catch(() => {});
   }
 
   async function turnOnAlerts() {
