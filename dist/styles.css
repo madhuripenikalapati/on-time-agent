@@ -253,6 +253,15 @@ h1, h2, h3, p { margin: 0; }
 @media (max-width: 960px) {
   .grid { grid-template-columns: 1fr; }
   .stage { grid-template-columns: 1fr; }
+  .stage:has(.stage-handoff) { padding-bottom: calc(200px + env(safe-area-inset-bottom)); }
+  .stage-handoff {
+    position: fixed;
+    z-index: 5;
+    inset: auto 12px calc(12px + env(safe-area-inset-bottom));
+    grid-template-columns: minmax(64px, 96px) minmax(0, 1fr);
+    padding: 12px;
+    box-shadow: 0 8px 32px rgb(0 0 0 / 18%);
+  }
   .med { grid-template-columns: 1fr; }
   .med .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings { grid-template-columns: 1fr; }
