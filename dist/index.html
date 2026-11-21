@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>On Time Agent</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header><a href="./">On Time Agent</a><span>Builders ’26 · Build Creative</span></header>
+<main>
+<section class="hero"><h1>Know which pack.<br>Know what happened.</h1><p>A Telugu medicine check-in that helps the patient check their labeled pack and keeps their chosen caregiver informed.</p><div class="actions"><button id="start" class="primary">Start Telugu check-in</button><a class="button" href="?view=caregiver" target="_blank" rel="noopener">Open caregiver view</a></div><p class="muted">Synthetic care plan · Browser demo · Updates sync across tabs on this device</p></section>
+<div class="layout">
+<section class="card patient"><div class="row"><h2>Patient view</h2><span id="phase" class="pill">Ready</span></div>
+<p class="muted">Try the microphone if your browser supports Telugu recognition, or use the example replies below.</p>
+<div id="transcript" role="log" aria-label="Call transcript"></div>
+<div class="actions"><button id="mic" disabled>Listen in Telugu</button><button id="repeat" disabled>Replay agent audio</button><button id="end" disabled>End call</button></div>
+<p id="audio-status" class="muted" role="status"></p>
+<form id="reply"><label for="words">Patient reply</label><div class="inputrow"><input id="words" required maxlength="240" placeholder="Aagandi, ee tablet?"><button id="send" disabled>Send</button></div></form>
+<div id="examples" class="actions" aria-label="Example replies"></div>
+<p id="callback" role="status"></p><button id="advance" hidden>Advance demo clock to callback</button>
+</section>
+<section class="card family"><div class="row"><h2>Caregiver view</h2><span class="pill">Live</span></div><p class="muted">Shared if the patient opts in.</p>
+<div class="outcome"><span class="muted">Today’s dose</span><h3 id="outcome" role="status">No check-in yet</h3><p id="detail"></p></div>
+<h3>Activity</h3><ol id="activity"></ol>
+</section>
+<section class="card pack" id="pack" hidden><h2>Check the medicine pack</h2>
+<img id="pack-photo" alt="Saved photo of the labeled medicine pack" hidden>
+<div id="sample-pack" class="sample-pack"><span>DEMO PACK · NOT FOR USE</span><strong id="sample-name"></strong><span id="sample-strength"></span></div>
+<dl><div><dt>Label name</dt><dd id="pack-name"></dd></div><div><dt>Label strength</dt><dd id="pack-strength"></dd></div><div><dt>Prescribed amount</dt><dd id="pack-amount"></dd></div></dl>
+<p>Compare the saved details with the original label. If the label is different or unreadable, ask a pharmacist to check it.</p>
+<div class="actions"><button id="match">Label matches</button><button id="mismatch">Different or unreadable</button></div></section>
+<section class="card plan"><details><summary>Review demo care plan</summary><p class="muted">Use synthetic information in this demo. Changes take effect after review and clear the current check-in.</p>
+<form id="plan">
+<label>Medicine name<input name="name" required maxlength="60"></label>
+<label>Pack strength<input name="strength" required maxlength="40"></label>
+<label>Prescribed amount<input name="amount" required maxlength="40"></label>
+<label>Meal<select name="meal"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option></select></label>
+<label>Timing<select name="timing"><option value="after">After meal</option><option value="before">Before meal</option><option value="fixed">Fixed time</option></select></label>
+<label>Usual meal or fixed time<input name="time" type="time" required></label>
+<label>Follow-up delay (minutes)<input name="delay" type="number" min="1" max="180" required></label>
+<label>Demo pack photo<input id="photo-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>
+<label class="check"><input type="checkbox" name="follow"> Confirmed plan allows a follow-up check-in</label>
+<label class="check"><input type="checkbox" name="share"> Patient opts in to caregiver updates</label>
+<label class="check"><input type="checkbox" name="review" required> I reviewed this synthetic plan</label>
+<button class="primary">Save reviewed plan</button>
+<p id="plan-status" role="status"></p>
+</form></details></section>
+</div>
+</main>
+<script type="module" src="app.mjs"></script>
+</body>
+</html>
