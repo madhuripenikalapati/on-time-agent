@@ -9,7 +9,7 @@ test('the majority wins a look-alike name and its simple name', () => {
   const a = read([row('Arkamin', '0.1 mg', 'breakfast', 'BP tablet'), row('Arkamin', '0.1 mg', 'dinner', 'BP tablet')], row('Glimy M1', null, 'breakfast', 'Sugar tablet'));
   const b = read([row('Azamun', '25 mg', 'breakfast', null), row('Azamun', '25 mg', 'dinner', null)], row('Cilny M', null, 'breakfast', 'BP tablet'));
   const c = read([row('Arkamin', '0.1 mg', 'breakfast', 'BP tablet'), row('Arkamin', '0.1 mg', 'dinner', 'BP tablet')], row('Glimy M1', null, 'breakfast', 'Sugar tablet'));
-  const out = voteReadings([a, b, c]);
+  const out = voteReadings([a, b, c, c, a]);
   assert.deepEqual(out.medicines.map(m => [m.name, m.strength, m.meal, m.nickname]), [
     ['Arkamin', '0.1 mg', 'breakfast', 'BP tablet'], ['Arkamin', '0.1 mg', 'dinner', 'BP tablet'], ['Glimy M1', null, 'breakfast', 'Sugar tablet'],
   ]);
@@ -51,4 +51,12 @@ test('a written 1-0-1 becomes breakfast and dinner even if the reading wrote one
 test('rows without a written pattern are kept as the reading gave them', () => {
   const rows = [row('Lyncipro', '500 mg', null, 'Antibiotic'), row('Lyncipro', '500 mg', 'dinner', 'Antibiotic')];
   assert.equal(expandPatterns({ notes: '', medicines: rows }).medicines.length, 2);
+});
+
+test('a plausible misreading that wins only 3 of 5 is flagged, not trusted', () => {
+  const right = read(row('Glimy M1', null, 'breakfast', 'Sugar tablet'));
+  const wrong = read(row('Cilny M', null, 'breakfast', 'BP tablet'));
+  const out = voteReadings([wrong, wrong, wrong, right, right]);
+  assert.equal(out.medicines[0].nickname, null);
+  assert.ok(out.medicines[0].doubt);
 });
