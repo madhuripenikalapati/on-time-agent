@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Password-protected On Time Agent pilot with synthetic data
+Parameters:
+  PilotSecretArn:
+    Type: String
+    Description: ARN of an existing Secrets Manager secret with OPENAI_API_KEY and PILOT_PASSWORD
+    AllowedPattern: 'arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+'
+Resources:
+  Site:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: '$default'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 8
+        ThrottlingRateLimit: 4
+  App:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: aws.handler
+      Runtime: nodejs22.x
+      Timeout: 12
+      MemorySize: 256
+      ReservedConcurrentExecutions: 4
+      Environment:
+        Variables:
+          PILOT_SECRET_ARN: !Ref PilotSecretArn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref PilotSecretArn
+      Events:
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Site
+            Method: GET
+            Path: /
+        Routes:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Site
+            Method: ANY
+            Path: '/{proxy+}'
+  AppLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${App}'
+      RetentionInDays: 14
+Outputs:
+  PilotUrl:
+    Description: HTTPS pilot URL
+    Value: !Sub 'https://${Site}.execute-api.${AWS::Region}.${AWS::URLSuffix}/'

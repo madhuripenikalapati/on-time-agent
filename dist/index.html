@@ -7,12 +7,26 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header><a href="./">On Time Agent</a><span>Builders ’26 · Build Creative</span></header>
+<header class="topbar">
+  <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">◷</span>On Time Agent</a>
+  <nav aria-label="Workspace">
+    <a id="nav-call" href="#check-in">Check-in</a>
+    <a id="nav-plan" href="#review-panel">Care plan</a>
+    <a id="nav-reminders" href="#reminders-panel">Reminders</a>
+    <a id="nav-family" href="?view=caregiver">Caregiver</a>
+  </nav>
+  <span class="environment">Demo workspace</span>
+</header>
 <main>
-<section class="hero"><h1>Know which pack.<br>Know what happened.</h1><p>A Telugu medicine check-in that helps the patient check their labeled pack and keeps their chosen caregiver informed.</p><div class="actions"><a class="button primary" href="#review-panel">Upload and review prescription</a><button id="start">Start Telugu check-in</button><a class="button" href="?view=caregiver" target="_blank" rel="noopener">Open caregiver view</a></div><p class="muted">Synthetic care plan · Browser demo · Updates sync across tabs on this device</p></section>
+<section class="page-head">
+  <div><h1 id="page-title">Medication check-in</h1><p id="page-description">A Telugu reminder based on the reviewed care plan.</p></div>
+  <a id="open-caregiver" class="button secondary" href="?view=caregiver" target="_blank" rel="noopener">Open caregiver in new tab</a>
+</section>
 <div class="layout">
-<section class="card patient"><div class="row"><h2>Patient view</h2><span id="phase" class="pill">Ready</span></div>
-<p class="muted">Try the microphone if your browser supports Telugu recognition, or use the example replies below.</p>
+<section class="card patient" id="check-in">
+<div class="card-top"><div><h2>Telugu call</h2><p id="plan-line" class="muted"></p></div><span id="phase" class="pill">Ready</span></div>
+<div class="call-toolbar actions"><button id="start" class="primary">Start Telugu check-in</button><button id="no-answer" disabled>Simulate no answer</button></div>
+<p class="muted">Use your microphone or type a reply.</p>
 <div id="transcript" role="log" aria-label="Call transcript"></div>
 <div class="actions"><button id="mic" disabled>Listen in Telugu</button><button id="repeat" disabled>Replay agent audio</button><button id="end" disabled>End call</button></div>
 <p id="audio-status" class="muted" role="status"></p>
@@ -20,10 +34,9 @@
 <div id="examples" class="actions" aria-label="Example replies"></div>
 <p id="callback" role="status"></p><button id="advance" hidden>Advance demo clock to callback</button>
 </section>
-<section class="card family"><div class="row"><h2>Caregiver view</h2><span class="pill">Live</span></div><p class="muted">Shared if the patient opts in.</p>
+<section class="card family"><div class="card-top"><div><h2>Medication update</h2><p class="muted">Shared with patient permission.</p></div><span class="pill">Live</span></div>
 <div class="outcome"><span class="muted">Today’s dose</span><h3 id="outcome" role="status">No check-in yet</h3><p id="detail"></p></div>
-<h3>Refills and visits</h3><ul id="reminder-summary"></ul>
-<h3>Activity</h3><ol id="activity"></ol>
+<div class="dashboard-lists"><section><h3>Refills and visits</h3><ul id="reminder-summary"></ul></section><section><h3>Recent activity</h3><ol id="activity"></ol></section></div>
 </section>
 <section class="card pack" id="pack" hidden><h2>Check the medicine pack</h2>
 <img id="pack-photo" alt="Saved photo of the labeled medicine pack" hidden>
@@ -31,8 +44,8 @@
 <dl><div><dt>Label name</dt><dd id="pack-name"></dd></div><div><dt>Label strength</dt><dd id="pack-strength"></dd></div><div><dt>Prescribed amount</dt><dd id="pack-amount"></dd></div></dl>
 <p>Compare the saved details with the original label. If the label is different or unreadable, ask a pharmacist to check it.</p>
 <div class="actions"><button id="match">Label matches</button><button id="mismatch">Different or unreadable</button></div></section>
-<section class="card plan" id="review-panel"><details open><summary>Upload and review prescription</summary>
-<p class="muted">Use synthetic information only. Files stay in this browser tab. Review or enter the schedule before starting the call.</p>
+<section class="card plan" id="review-panel"><h2>Prescription and schedule</h2>
+<p class="muted">Upload a synthetic TXT, PDF, or image. Sample-format TXT fills a draft. Review PDF or image instructions and enter the schedule below.</p>
 <div class="source-controls"><label>Synthetic prescription <input id="prescription" type="file" accept=".txt,.pdf,image/png,image/jpeg,image/webp"></label><a href="./sample-prescription.txt" download>Download sample prescription</a> · <button id="sample" type="button">Load sample</button>
 <p id="source-status" role="status"></p><pre id="source-text" hidden></pre><img id="source-photo" alt="Uploaded prescription preview" hidden><object id="source-pdf" type="application/pdf" aria-label="Uploaded prescription PDF" hidden><p>Use the document preview link to view this PDF.</p></object><a id="source-link" target="_blank" rel="noopener" hidden>Open uploaded PDF</a></div>
 <form id="plan">
@@ -49,9 +62,9 @@
 <label class="check"><input type="checkbox" name="share"> Patient opts in to caregiver updates</label>
 <label class="check"><input type="checkbox" name="review" required> I reviewed this synthetic plan</label>
 <button class="primary">Save reviewed plan</button>
-<p id="plan-status" role="status"></p>
-</form></details></section>
-<section class="card reminders"><h2>Refill and appointment reminders</h2>
+<p id="plan-status" role="status"></p><a id="plan-call" href="#check-in" class="button" hidden>Go to Telugu check-in</a>
+</form></section>
+<section class="card reminders" id="reminders-panel"><h2>Refill and appointment reminders</h2>
 <p class="muted">Reminders appear here and in the caregiver view when sharing is on. Keep this page open for due reminders to update.</p>
 <form id="reminders">
 <label>Stock counted now (tablets)<input name="stock" type="number" min="0" max="9999" step="0.5" placeholder="e.g. 14"></label>

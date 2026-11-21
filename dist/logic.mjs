@@ -7,10 +7,11 @@ export function classify(raw, phase, final = true) {
   if (/ఏ (టాబ్లెట్|మందు)|ఈ టాబ్లెట్|\b(ee tablet|ye tablet|which (tablet|pack|medicine))\b/u.test(text)) return 'pack';
   if (/^(ఇంకా లేదు|ఇంక లేదు|లేదు|inka (ledu|ledhu)|not yet|no)$/u.test(text)) {
     if (phase === 'meal') return 'meal-late';
-    if (phase === 'dose') return 'unconfirmed';
+    if (phase === 'dose') return 'not-taken';
   }
   if (/తినలేదు|బ్రేక్.?ఫాస్ట్ కాలేదు|\b(inka (breakfast )?(cheyyaledu|tinaledu)|haven't eaten|not eaten|breakfast is late)\b/u.test(text)) return 'meal-late';
-  if (/వేసుకోలేదు|తీసుకోలేదు|గుర్తు లేదు|తెలియదు|\b(vesukoledu|teesukoledu|not taken|didn't take|unsure|not sure)\b/u.test(text)) return 'unconfirmed';
+  if (/గుర్తు లేదు|తెలియదు|\b(unsure|not sure|don't remember)\b/u.test(text)) return 'unconfirmed';
+  if (/వేసుకోలేదు|తీసుకోలేదు|\b(vesukoledu|teesukoledu|not taken|didn't take)\b/u.test(text)) return phase === 'dose' ? 'not-taken' : 'unconfirmed';
   if (stop) return 'yield';
   const yes = /^(అవును|avunu|yes)$/u.test(text);
   if (phase === 'dose' && (yes || /^(టాబ్లెట్ )?(వేసుకున్నాను|వేసుకున్నా|తీసుకున్నాను|తీసుకున్నా)$|^(tablet )?(vesukunnanu|vesukunna|teesukunnanu|i took (it|the tablet))$/u.test(text))) return 'taken';

@@ -9,10 +9,40 @@ function load() {
   try { return JSON.parse(localStorage.getItem(key)) ?? initial(); } catch { return initial(); }
 }
 const caregiverOnly = new URLSearchParams(location.search).get('view') === 'caregiver';
-if (caregiverOnly) document.body.classList.add('caregiver-only');
+const views = {
+  call:['Medication check-in','A Telugu reminder based on the reviewed care plan.'],
+  plan:['Care plan','Review the prescription and link the labeled medicine pack.'],
+  reminders:['Reminders','Set a refill lead time or add an upcoming appointment.'],
+  family:['Caregiver dashboard','Dose reports, follow-ups, and reminders from this browser.'],
+};
+function showView() {
+  const view = caregiverOnly ? 'family' : ({'#review-panel':'plan','#reminders-panel':'reminders'}[location.hash] ?? 'call');
+  for (const name of ['call','plan','reminders','caregiver']) document.body.classList.remove('view-' + name);
+  document.body.classList.add('view-' + (view === 'family' ? 'caregiver' : view));
+  for (const name of Object.keys(views)) get('nav-' + name).removeAttribute('aria-current');
+  get('nav-' + view).setAttribute('aria-current','page');
+  [get('page-title').textContent,get('page-description').textContent] = views[view];
+  get('open-caregiver').hidden = view !== 'call';
+}
+if (caregiverOnly) {
+  get('nav-call').href = './#check-in';
+  get('nav-plan').href = './#review-panel';
+  get('nav-reminders').href = './#reminders-panel';
+}
+showView();
+window.addEventListener('hashchange',showView);
 let state = load();
 let phase = 'ready';
 let pendingReview = false;
+let openai = false;
+let phaseVersion = 0;
+let interpretationSequence = 0;
+if (location.protocol === 'https:' || ['localhost','127.0.0.1'].includes(location.hostname)) {
+  fetch('/api/status').then(response => response.ok ? response.json() : {}).then(config => {
+    openai = Boolean(config.openai);
+    if (openai) get('audio-status').textContent = 'OpenAI interpretation enabled for this demo.';
+  }).catch(() => {});
+}
 let words = '';
 let speechVersion = 0;
 let recognition;
@@ -33,9 +63,11 @@ const assist = (prefix, words) => {
 };
 function setPhase(next) {
   phase = next;
+  phaseVersion++;
   get('phase').textContent = phaseNames[next];
   const active = !['ready','done','waiting'].includes(next);
   get('send').disabled = !active;
+  get('no-answer').disabled = !active;
   get('mic').disabled = !active || !Recognition;
   get('end').disabled = !active;
   get('repeat').disabled = !active;
@@ -117,6 +149,9 @@ function renderReminders() {
   get('reminder-status').textContent = items.join(' | ');
 }
 function renderCaregiver() {
+  const plan = state.plan;
+  get('plan-line').textContent = plan.name + ' · ' + plan.amount + ' · ' +
+    (plan.timing === 'fixed' ? plan.time : (plan.timing === 'before' ? 'Before ' : 'After ') + plan.meal);
   renderReminders();
   get('outcome').textContent = state.plan.share ? state.outcome : 'Sharing is off';
   get('detail').textContent = state.plan.share ? state.detail : 'The patient has not opted into caregiver updates.';
@@ -149,6 +184,12 @@ function report(outcome, detail) {
   state.detail = detail;
   state.events = [new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}) + ' · ' + outcome, ...state.events].slice(0,8);
   persist();
+}
+function queueFollowUp(reason) {
+  state.due = Date.now() + state.plan.delay * 60000;
+  setPhase('waiting');
+  report('Follow-up scheduled', reason + ' Dose unconfirmed. Check-in in ' + state.plan.delay + ' minutes.');
+  say('సరే. మీ ప్లాన్ ప్రకారం మళ్ళీ కాల్ చేస్తాను.');
 }
 function start(callback = false) {
   if (caregiverOnly || pendingReview || (callback && state.due === null)) return;
@@ -193,10 +234,33 @@ function mismatched() {
   report('Needs help checking the pack', 'Dose unconfirmed. The patient said the label differs or is unreadable.');
   say('డోస్ తీసుకున్నట్టు నమోదు చేయలేదు. ఈ ప్యాక్ గురించి ఫార్మసిస్ట్‌ని అడగండి.');
 }
-function hear(reply) {
+async function hear(reply) {
   if (['ready','waiting','done'].includes(phase)) return;
   assist('Patient', reply);
-  const result = classify(reply, phase);
+  let result = classify(reply, phase);
+  if (openai && !['continue','pack','mismatch','yield'].includes(result)) {
+    const version = phaseVersion;
+    const sequence = ++interpretationSequence;
+    get('audio-status').textContent = 'Interpreting the reply…';
+    try {
+      const response = await fetch('/api/interpret', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({reply,phase}),signal:AbortSignal.timeout(8500)
+      });
+      if (!response.ok) throw new Error('Interpretation unavailable');
+      const {action} = await response.json();
+      if (version !== phaseVersion || sequence !== interpretationSequence) return;
+      // Only a locally recognized, unambiguous final confirmation can record a dose.
+      if (['not-taken','unconfirmed'].includes(result)) { /* keep explicit local negative or uncertainty */ }
+      else result = action === 'taken' && result !== 'taken' ? 'unclear' : action;
+      get('audio-status').textContent = 'Reply interpreted with OpenAI.';
+    } catch {
+      if (version !== phaseVersion || sequence !== interpretationSequence) return;
+      get('audio-status').textContent = 'OpenAI unavailable. Using the local reply rules.';
+    }
+  } else {
+    interpretationSequence++;
+  }
   switch (result) {
     case 'continue': return;
     case 'pack':
@@ -207,10 +271,7 @@ function hear(reply) {
     case 'meal-done': askDose(); return;
     case 'meal-late':
       if (phase === 'meal' && state.plan.timing === 'after' && state.plan.follow) {
-        state.due = Date.now() + state.plan.delay * 60000;
-        setPhase('waiting');
-        report('Follow-up scheduled', 'Meal delayed. Dose unconfirmed. Check-in in ' + state.plan.delay + ' minutes.');
-        say('సరే. మీ ప్లాన్ ప్రకారం మళ్ళీ కాల్ చేస్తాను.');
+        queueFollowUp('Meal delayed.');
       } else {
         setPhase('done');
         report('Unconfirmed', 'Meal delayed. No automatic schedule change.');
@@ -222,6 +283,12 @@ function hear(reply) {
       report('Patient reported taking the dose', 'Self-reported during this Telugu check-in.');
       say('సరే. మీరు వేసుకున్నారని నమోదు చేశాను.');
       return;
+    case 'not-taken':
+      if (phase === 'dose' && state.plan.follow) {
+        queueFollowUp('Patient reported the dose was not taken.');
+        return;
+      }
+      // A negative report and uncertainty both remain unconfirmed.
     case 'unconfirmed':
       setPhase('done');
       report('Unconfirmed', 'No clear confirmation that the dose was taken.');
@@ -239,6 +306,16 @@ function hear(reply) {
 get('start').onclick = () => start();
 get('advance').onclick = () => start(true);
 get('repeat').onclick = () => play(words, audioDone);
+get('no-answer').onclick = () => {
+  stopAudio();
+  recognition?.abort();
+  if (state.plan.follow) {
+    queueFollowUp('No answer.');
+  } else {
+    setPhase('done');
+    report('Unconfirmed','No answer. The reviewed plan does not allow a follow-up.');
+  }
+};
 get('end').onclick = () => {
   stopAudio();
   recognition?.abort();
@@ -319,6 +396,7 @@ planForm.onsubmit = async event => {
   get('transcript').replaceChildren();
   setPhase('ready');
   get('reminders').elements.namedItem('stock').value = '';
+  get('plan-call').hidden = false;
   get('plan-status').textContent = 'Reviewed demo care plan saved. Enter a fresh stock count to estimate a refill.';
   planForm.elements.namedItem('review').checked = false;
 };
@@ -348,6 +426,7 @@ function beginReview() {
     return false;
   }
   pendingReview = true;
+  get('plan-call').hidden = true;
   planForm.elements.namedItem('review').checked = false;
   get('start').disabled = true;
   return true;
