@@ -1,7 +1,7 @@
 {
   "name": "On Time — మందుల సమయం",
   "short_name": "On Time",
-  "description": "Telugu medicine check-in calls for your parents, and updates for the family.",
+  "description": "Medicine check-in calls in their own language for the people you care for, and updates for the family.",
   "start_url": "/?app=1",
   "scope": "/",
   "display": "standalone",

@@ -366,7 +366,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       }
     }
 
-    // Ask AI what each medicine is for and suggest the name Amma knows it by.
+    // Ask AI what each medicine is for and suggest the name the patient knows it by.
     async function suggestNames(meds) {
       const named = meds.filter(m => m.name?.trim());
       if (!named.length) return;
@@ -562,7 +562,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         }
       } }, data.onboarded ? 'Save family' : 'Continue to medicines →');
       root.replaceChildren(
-        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Family' : 'Welcome to On Time'), h('p', {}, 'Tell us who takes the medicines and who looks after them. On Time calls them in Telugu and keeps everyone here updated.'))),
+        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Family' : 'Welcome to On Time'), h('p', {}, 'Tell us who takes the medicines and who looks after them. On Time calls them in their language and keeps everyone here updated.'))),
         h('div', { class: 'stack' },
           h('section', { class: 'card' }, h('h2', {}, '1 · Who is setting this up?'),
             h('div', { class: 'roles' }, roles.map(([value, emoji, title, hint]) => h('button', { type: 'button', class: 'role' + (state.setupBy === value ? ' on' : ''), onclick: () => {
@@ -626,7 +626,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         m.photo ? h('button', { class: 'btn small ghost', onclick: () => { m.photo = ''; redraw(); } }, 'Remove photo') : null),
       h('div', { class: 'fields' },
         f('Medicine (as written)', input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: () => { if (!m.nickname || m.aiNickname) suggestNamesFor([m]); } }), 'name', 'wide'),
-        f(m.aiNickname ? 'Simple name · AI suggested, please check' : 'Simple name (what Amma calls it)', input('nickname', { placeholder: 'e.g. Sugar tablet', maxlength: 40, list: 'nicknames', oninput: event => { m.nickname = event.target.value; m.aiNickname = false; } }), 'nickname', 'wide' + (m.aiNickname ? ' suggested' : '')),
+        f(m.aiNickname ? 'Simple name · AI suggested, please check' : 'Simple name (what they call it)', input('nickname', { placeholder: 'e.g. Sugar tablet', maxlength: 40, list: 'nicknames', oninput: event => { m.nickname = event.target.value; m.aiNickname = false; } }), 'nickname', 'wide' + (m.aiNickname ? ' suggested' : '')),
         f('Strength', input('strength', { placeholder: '40 mg', maxlength: 40 }), 'strength'),
         f('Dose', input('amount', { placeholder: '1 tablet', maxlength: 40 }), 'amount'),
         f('With meal', select('meal', [['breakfast', 'Breakfast'], ['lunch', 'Lunch'], ['dinner', 'Dinner']]), 'meal'),
@@ -645,7 +645,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
   return { stop: () => poller.stop(), refresh: () => poller.now() };
 }
 
-export const relationLabel = { son: 'Son', daughter: 'Daughter', spouse: 'Spouse', grandchild: 'Grandchild', sibling: 'Sibling', caretaker: 'Caretaker', other: 'Family' };
+export const relationLabel = { son: 'Son', daughter: 'Daughter', spouse: 'Spouse', grandchild: 'Grandchild', sibling: 'Sibling', parent: 'Parent', relative: 'Relative', friend: 'Friend', neighbour: 'Neighbour', caretaker: 'Caretaker', other: 'Other' };
 
 export function turnChip(turn) {
   const verdict = { backchannel: 'kept talking', yield: 'stopped and listened', answer: 'answer', noise: 'ignored' }[turn.decision];

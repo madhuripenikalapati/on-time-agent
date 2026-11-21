@@ -1,4 +1,4 @@
-// Amma's phone: waits for a call, rings, and runs the live conversation in her language.
+// The patient's phone: waits for a call, rings, and runs the live conversation in their language.
 import { h, icon, api, poll, time, slotOf, packCard } from './ui.mjs';
 import { VoiceCall } from './realtime.mjs';
 import { takenOn } from './schedule.mjs';

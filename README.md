@@ -1,6 +1,6 @@
 # On Time
 
-**Builders '26 · Build Creative.** Snap a parent's prescription. On Time calls them in Telugu at the right time, listens the way a person would, shows them the right pack when they're unsure, and tells the family how it went.
+**Builders '26 · Build Creative.** Snap the prescription of someone you care for (a parent, a grandparent, a spouse, anyone on daily medicines). On Time calls them in their own language at the right time, listens the way a person would, shows them the right pack when they're unsure, and tells the family how it went.
 
 ## The journey
 
@@ -49,9 +49,9 @@ Calls, the patient's phone screen and the call alert work in **Telugu, Hindi, Ta
 - Speech-to-text runs in the call's language. Captions keep all Indian scripts and drop anything else.
 - Verified with live calls in Telugu, Hindi and Tamil, including the safety-net goodbye.
 
-## An app on the parent's phone, with alarm-style call alerts
+## An app on the patient's phone, with alarm-style call alerts
 
-- **Install:** open the parent's phone link (`?h=<id>&view=phone`) on their phone. On Android, tap **Install On Time app**. On iPhone, use Share → Add to Home Screen, then open it from the home screen.
+- **Install:** open the patient's phone link (`?h=<id>&view=phone`) on their phone. On Android, tap **Install On Time app**. On iPhone, use Share → Add to Home Screen, then open it from the home screen.
 - **Turn on call alerts** on that screen (one permission prompt). From then on the phone buzzes like an incoming call, even when the app is closed. Tapping the alert opens the ringing screen; one tap on **ఎత్తండి** answers.
 - **Automatic calls:** an EventBridge rule runs every minute. At each medicine time (the earliest time among that part of the day's medicines) it rings the phone, unless those doses are already reported taken. A ring nobody answers for 3 minutes becomes a missed call, and a follow-up rings later if the family allowed it. Follow-ups after a meal or an untaken dose ring automatically too. **Call now** on the family dashboard uses the same alert.
 - Alerts are Web Push with no payload: the push only wakes the phone, which then asks the server who is calling. Only a signed VAPID token is needed (Node's built-in crypto, no libraries). Push addresses are never sent back to browsers.
