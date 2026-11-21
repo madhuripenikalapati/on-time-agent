@@ -1,4 +1,5 @@
 import { classify } from './logic.mjs';
+import { clips } from './audio-lines.mjs';
 
 const get = id => document.getElementById(id);
 const key = 'on-time-agent-v1';
@@ -16,6 +17,7 @@ let speechVersion = 0;
 let recognition;
 let callbackTimer;
 let audioDone;
+let playback;
 const synth = window.speechSynthesis;
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const meals = {breakfast:'బ్రేక్‌ఫాస్ట్', lunch:'మధ్యాహ్న భోజనం', dinner:'రాత్రి భోజనం'};
@@ -54,12 +56,23 @@ function setPhase(next) {
 function stopAudio() {
   speechVersion++;
   audioDone = undefined;
+  playback?.pause();
+  playback = undefined;
   synth?.cancel();
 }
 function play(line, finished = undefined) {
   stopAudio();
   audioDone = finished;
   const version = speechVersion;
+  const clip = clips.get(line);
+  if (clip) {
+    playback = new Audio('./audio/' + clip + '.m4a');
+    playback.onended = () => { if (version === speechVersion) finished?.(); };
+    playback.play().catch(() => {
+      if (version === speechVersion) get('audio-status').textContent = 'Playback was blocked. Select Replay agent audio or use the text controls.';
+    });
+    return;
+  }
   const speaker = synth?.getVoices().find(v => /^te([-_]|$)/i.test(v.lang));
   if (!speaker || !window.SpeechSynthesisUtterance) {
     get('audio-status').textContent = 'Telugu playback voice unavailable on this device. The dialogue and example replies still work.';
