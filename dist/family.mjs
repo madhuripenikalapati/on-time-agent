@@ -251,7 +251,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       h('div', { class: 'small muted' }, label),
       h('div', { class: 'share-link' }, shown),
       h('div', { class: 'row' },
-        h('button', { class: 'btn small', onclick: async () => toast(await copyText(url, shown) ? 'Link copied' : 'Link selected: press and hold to copy it') }, icon('copy'), 'Copy'),
+        h('button', { class: 'btn small', onclick: async () => toast(await copyText(url, shown) ? 'Link copied' : matchMedia('(pointer: coarse)').matches ? 'Link selected: press and hold it to copy' : 'Link selected: press ' + (/Mac/.test(navigator.platform) ? '⌘C' : 'Ctrl+C') + ' to copy') }, icon('copy'), 'Copy'),
         navigator.share ? h('button', { class: 'btn small', onclick: () => navigator.share({ title: 'On Time', text: label, url }).catch(() => {}) }, 'Share…') : null,
         h('a', { class: 'btn small ghost', href: url, target: '_blank', rel: 'noopener' }, 'Open')));
   }
