@@ -128,7 +128,11 @@ export function mountFamily(root, id, { stage = false } = {}) {
         return h('div', { class: 'alert ' + alert.kind },
           h('span', { class: 'icon' }, emoji),
           h('div', {}, h('strong', {}, title + (med ? ' · ' + med.name : '')), h('span', {}, alert.note), h('div', { class: 'small' }, ago(alert.at, data.serverTime))),
-          h('button', { class: 'btn small', onclick: () => act(() => api.resolve(id, alert.id), 'Marked as handled') }, 'Handled'),
+          alert.kind === 'pack_mismatch'
+            ? alert.acknowledgedAt
+              ? h('span', { class: 'pill' }, 'Caregiver following up · dose unconfirmed')
+              : h('button', { class: 'btn small', onclick: () => act(() => api.acknowledge(id, alert.id), 'Follow-up acknowledged') }, 'I’ll follow up')
+            : h('button', { class: 'btn small', onclick: () => act(() => api.resolve(id, alert.id), 'Marked as handled') }, 'Handled'),
         );
       })));
     if (data.followUp) {

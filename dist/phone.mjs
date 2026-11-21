@@ -28,6 +28,8 @@ export function mountPhone(root, id, { stage = false } = {}) {
   let heard = '';
   let pack = null;
   let packNode = null;
+  let savingMismatch = false;
+  let handoffNode = null;
   let turns = [];
   let agentState = 'speaking';
   let error = '';
@@ -43,7 +45,10 @@ export function mountPhone(root, id, { stage = false } = {}) {
   root.append(h('div', { class: 'phone-page' }, phone));
 
   const poller = poll(id, fresh => {
+    const previous = handoffAlert();
     data = fresh;
+    const current = handoffAlert();
+    if (screen === 'call' && (previous?.id !== current?.id || previous?.acknowledgedAt !== current?.acknowledgedAt)) render();
     if (screen === 'idle' && data.ring) ring();
     // Opened from a call alert (or already ringing): go straight to the ringing screen.
     // The Answer tap itself unlocks audio and the microphone.
@@ -84,7 +89,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
         next ? h('div', { class: 'next' }, next.photo ? h('img', { class: 'next-photo', src: next.photo, alt: 'Photo of the ' + next.name + ' strip' }) : null, h('span', { class: 'soft small te' }, T.next), h('strong', { class: 'next-name' }, next.name), h('span', { class: 'soft small' }, [next.brand, next.amount, next.when].filter(Boolean).join(' · '))) : null,
         data?.followUp ? h('div', { class: 'soft small' }, 'Follow-up call at ' + time(data.followUp.at)) : null,
       ),
-      stage ? null : setupCard()];
+      handoffView(), stage ? null : setupCard()];
     }
     if (screen === 'ringing') {
       return [h('div', { class: 'center' },
@@ -98,7 +103,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       return [h('div', { class: 'center' }, h('div', { class: 'orb speaking' }, icon('phone')), h('div', { class: 'te' }, T.connecting))];
     }
     if (screen === 'ended') {
-      return [h('div', { class: 'center' }, h('div', { class: 'orb' }, icon('check')), h('div', { class: 'greet te' }, T.ended), error ? h('div', { class: 'error-banner' }, error) : null)];
+      return [h('div', { class: 'center' }, h('div', { class: 'orb' }, icon('check')), h('div', { class: 'greet te' }, T.ended), error ? h('div', { class: 'error-banner' }, error) : null), handoffView()];
     }
     // In call
     const orbClass = 'orb ' + (agentState === 'ducked' ? 'ducked' : agentState === 'speaking' ? 'speaking' : '');
@@ -109,11 +114,30 @@ export function mountPhone(root, id, { stage = false } = {}) {
           h('button', { 'aria-pressed': String(mode === 'standard'), onclick: () => setMode('standard') }, 'Standard bot'))),
       h('div', { class: 'caller' }, h('div', { class: orbClass }, icon('logo')),
         h('div', { class: 'soft small te' }, agentState === 'listening' || agentState === 'ducked' ? T.listening : T.speaking)),
-      pack ? packView() : null,
+      pack && pack.id !== handoffAlert()?.medicineId ? packView() : null,
+      handoffView(),
       h('div', { class: 'caption te', 'aria-live': 'polite' }, caption || '…', heard ? h('span', { class: 'you' }, '🗣 ' + heard) : null),
       error ? h('div', { class: 'error-banner' }, error) : null,
       h('div', { class: 'call-foot' }, h('button', { class: 'round hangup', 'aria-label': 'Hang up', onclick: () => voice?.hangUp('hung-up') }, icon('phone'))),
     )];
+  }
+
+  function handoffAlert() {
+    return data?.alerts?.find(a => a.kind === 'pack_mismatch' && !a.resolved && data.todayDoses?.[a.medicineId]?.status === 'unsure'
+      && data.todayDoses?.[a.medicineId]?.callId === a.callId);
+  }
+
+  function handoffView() {
+    const alert = handoffAlert();
+    const medicine = data?.medicines?.find(m => m.id === alert?.medicineId);
+    if (!medicine) return null;
+    if (handoffNode?.alertId !== alert.id || handoffNode.photo !== medicine.photo) {
+      const status = h('div', { class: 'pack-card pack-actions', role: 'status' });
+      handoffNode = { alertId: alert.id, photo: medicine.photo, status, node: h('div', {}, packCard(medicine), status) };
+    }
+    const message = alert.acknowledgedAt ? 'Caregiver is following up. Dose unconfirmed.' : 'Caregiver notified. Dose unconfirmed.';
+    if (handoffNode.status.textContent !== message) handoffNode.status.textContent = message;
+    return handoffNode.node;
   }
 
   // The pack card is built once per show_pack and reused across renders. Rebuilding it on every
@@ -339,12 +363,26 @@ export function mountPhone(root, id, { stage = false } = {}) {
     render();
   }
 
-  function packAnswer(matches) {
-    voice?.tell(matches
-      ? '(On screen, the patient tapped: the label on the pack in my hand matches.)'
-      : '(On screen, the patient tapped: the label is different or I cannot read it.)');
-    pack = null;
-    render();
+  async function packAnswer(matches) {
+    if (savingMismatch || !pack || !call) return;
+    if (matches) {
+      voice?.tell('(On screen, the patient tapped: the label on the pack in my hand matches.)');
+      pack = null;
+      render();
+      return;
+    }
+    const medicine = pack;
+    savingMismatch = true;
+    error = '';
+    try {
+      await send({ type: 'alert', kind: 'pack_mismatch', medicineId: medicine.id, note: 'Patient reported a different or unreadable pack label.' });
+      voice?.tell('(The patient tapped that the pack label differs or is unreadable. The app has already notified the caregiver and saved the dose as unconfirmed.)');
+    } catch {
+      error = 'Could not notify the caregiver. Tap “Different / can’t read” again to retry.';
+    } finally {
+      savingMismatch = false;
+      render();
+    }
   }
 
   function enqueue(event) {
@@ -358,8 +396,9 @@ export function mountPhone(root, id, { stage = false } = {}) {
     try { await api.events(id, call.id, events); } catch {}
   }
   async function send(event) {
+    const callId = call.id;
     await flush();
-    const result = await api.events(id, call.id, [event]);
+    const result = await api.events(id, callId, [event]);
     data = result;
     return result.result?.[0] ?? { ok: true };
   }

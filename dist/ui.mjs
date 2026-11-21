@@ -100,6 +100,7 @@ export const api = {
   missed: (id, reason) => call('POST', '/api/h/' + id + '/missed', { reason }),
   advance: id => call('POST', '/api/h/' + id + '/advance', {}),
   cancelFollowUp: id => call('POST', '/api/h/' + id + '/cancel-followup', {}),
+  acknowledge: (id, alertId) => call('POST', '/api/h/' + id + '/alerts/' + alertId + '/acknowledge', {}),
   resolve: (id, alertId) => call('POST', '/api/h/' + id + '/alerts/' + alertId + '/resolve', {}),
   startCall: (id, body) => call('POST', '/api/h/' + id + '/calls', body),
   events: (id, callId, events) => call('POST', '/api/h/' + id + '/calls/' + callId + '/events', { events }),

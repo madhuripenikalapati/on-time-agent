@@ -245,3 +245,24 @@ test('an unknown language falls back to Telugu', async () => {
   const doc = setProfile(newHousehold(), { setupBy: 'self', patient: { name: 'X', language: 'klingon' }, caregivers: [] });
   assert.equal(doc.patient.language, 'te');
 });
+
+test('a pack mismatch saves one handoff and blocks automated confirmation without reducing stock', () => {
+  const doc = household();
+  const call = startCall(doc, { slot: 'morning' }, morning);
+  const [med] = doc.medicines;
+  const stock = med.stock;
+  const event = { type: 'alert', kind: 'pack_mismatch', medicineId: med.id };
+  callEvent(doc, call.id, event, morning);
+  callEvent(doc, call.id, event, morning);
+  assert.equal(doc.alerts.length, 1);
+  assert.equal(call.outcomes[0].status, 'unsure');
+
+  const callback = startCall(doc, { slot: 'morning' }, morning + 1000);
+  for (const activeCall of [call, callback]) {
+    const result = callEvent(doc, activeCall.id,
+      { type: 'dose', medicineId: med.id, status: 'taken' }, morning + 1000);
+    assert.equal(result.ok, false);
+  }
+  assert.equal(doc.doses[istDate(morning)][med.id].status, 'unsure');
+  assert.equal(med.stock, stock);
+});
