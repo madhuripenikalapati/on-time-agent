@@ -373,8 +373,20 @@ export function mountFamily(root, id, { stage = false } = {}) {
       return groups;
     }
 
-    // "Glycomet", "Tab. Glycomet 500 mg" and "GLYCOMET 500" are the same medicine.
-    const baseName = name => String(name ?? '').toLowerCase().replace(/\btab(let)?s?\b\.?|\bcap(sule)?s?\b\.?/g, '').replace(/\d+(\.\d+)?\s*(mg|mcg|g|iu|k|ml)?\b/g, '').replace(/[^a-z]/g, '');
+    function medicineIdentity(medicine) {
+      const strength = String(medicine.strength ?? '').toLowerCase().replace(/\s+/g, '');
+      let name = String(medicine.name ?? '').trim().toLowerCase()
+        .replace(/^(?:tab(?:let)?s?|cap(?:sule)?s?)\.?\s+/u, '').replace(/\s+/g, ' ');
+      const suffix = name.match(/\s+\d+(?:\.\d+)?\s*(?:mcg|mg|g|iu|ml)$/u)?.[0];
+      if (suffix && suffix.replace(/\s+/g, '') === strength) name = name.slice(0, -suffix.length);
+      return { name, strength };
+    }
+
+    function prescriptionRowKey(row) {
+      const { name, strength } = medicineIdentity(row);
+      return JSON.stringify([name, strength, row.meal || '', row.timing || (row.meal ? 'after' : ''),
+        row.days || '', row.timing === 'fixed' ? row.time || '' : '']);
+    }
 
     // A plan already has medicines: ask whether this prescription replaces them or adds to them
     // (a new prescription from the same doctor, or a second doctor's).
@@ -414,7 +426,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         // The same medicine and timing on two pages is one row.
         const seen = new Set();
         const unique = rows.filter(row => {
-          const key = [baseName(row.name), row.meal, row.timing, row.days].map(v => String(v ?? '').toLowerCase()).join('|');
+          const key = prescriptionRowKey(row);
           if (seen.has(key)) return false;
           seen.add(key);
           return true;
@@ -422,26 +434,34 @@ export function mountFamily(root, id, { stage = false } = {}) {
         if (!unique.length) throw new Error('No medicines could be read. Add them by hand below.');
         // A medicine that stays keeps its pack photo and tablet count (morning and night rows share one strip).
         const before = editor.medicines.filter(m => m.name?.trim());
-        const packOf = name => before.find(m => baseName(m.name) === baseName(name) && (m.photo || (m.stock !== '' && m.stock != null)));
+        const packOf = row => {
+          const identity = medicineIdentity(row);
+          if (!identity.name || !identity.strength) return undefined;
+          return before.find(m => {
+            const saved = medicineIdentity(m);
+            return saved.name === identity.name && saved.strength === identity.strength
+              && (m.photo || (m.stock !== '' && m.stock != null));
+          });
+        };
         const drafted = unique.map(row => ({
           name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '',
           nickname: row.nickname ?? '', use: row.use ?? '', aiNickname: Boolean(row.nickname || row.use),
           // Indian prescriptions write "before food" when it matters; otherwise it is taken after the meal.
           meal: row.meal ?? '', timing: row.timing ?? (row.meal ? 'after' : ''), assumedTiming: !row.timing && Boolean(row.meal), time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '', doubt: row.doubt ?? '',
           courseDays: /^\d{1,3}$/.test(String(row.duration_days ?? '')) && +row.duration_days >= 1 && +row.duration_days <= 365 ? +row.duration_days : '',
-        })).map(m => { const pack = packOf(m.name); return pack ? { ...m, photo: pack.photo ?? m.photo, stock: pack.stock ?? m.stock } : m; });
+        })).map(m => { const pack = packOf(m); return pack ? { ...m, photo: pack.photo ?? m.photo, stock: pack.stock ?? m.stock } : m; });
         let added = drafted;
         if (mode === 'add') {
-          // Skip what is already in the plan (same medicine, same meal and days).
-          const have = new Set(before.map(m => [baseName(m.name), m.meal, m.days].join('|')));
-          added = drafted.filter(m => !have.has([baseName(m.name), m.meal, m.days].join('|')));
+          // Skip only the same medicine, strength and schedule.
+          const have = new Set(before.map(prescriptionRowKey));
+          added = drafted.filter(m => !have.has(prescriptionRowKey(m)));
           const room = 20 - before.length;
           if (added.length > room) { toast('Only ' + room + ' more medicines fit (20 at most). Remove some first.', 'bad'); added = added.slice(0, Math.max(0, room)); }
           editor.medicines = [...before, ...added];
         } else {
           editor.medicines = drafted;
         }
-        const kept = new Set(drafted.filter(m => packOf(m.name)).map(m => baseName(m.name))).size;
+        const kept = new Set(drafted.filter(m => packOf(m)).map(m => JSON.stringify(medicineIdentity(m)))).size;
         reviewed.checked = false;
         drawList();
         // A name the readings disagreed on gets no suggestion until the family corrects it.

@@ -282,3 +282,22 @@ test('a pack mismatch saves one handoff and blocks automated confirmation withou
   assert.equal(doc.doses[istDate(morning)][med.id].status, 'unsure');
   assert.equal(med.stock, stock);
 });
+
+test('a mismatch restores only the stock actually deducted, once, across rows sharing a pack', () => {
+  const doc = household();
+  const [morningDose, lunchDose] = doc.medicines.filter(m => m.name === 'Glycomet 500');
+  morningDose.stock = lunchDose.stock = 0.5;
+  const first = startCall(doc, { slot: 'morning' }, morning);
+  const taken = { type: 'dose', medicineId: morningDose.id, status: 'taken' };
+  callEvent(doc, first.id, taken, morning);
+  callEvent(doc, first.id, taken, morning);
+  assert.deepEqual([morningDose.stock, lunchDose.stock], [0, 0]);
+
+  const next = startCall(doc, { slot: 'morning' }, morning + 1000);
+  const mismatch = { type: 'alert', kind: 'pack_mismatch', medicineId: morningDose.id };
+  callEvent(doc, next.id, mismatch, morning + 1000);
+  callEvent(doc, next.id, mismatch, morning + 1000);
+  assert.deepEqual([morningDose.stock, lunchDose.stock], [0.5, 0.5]);
+  assert.equal(doc.doses[istDate(morning)][morningDose.id].status, 'unsure');
+  assert.equal(doc.alerts.length, 1);
+});
