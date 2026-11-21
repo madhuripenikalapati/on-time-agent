@@ -1,0 +1,8 @@
+ON TIME AGENT — SYNTHETIC PRESCRIPTION — NOT FOR CLINICAL USE
+Name: Demo Medicine A
+Strength: 10 mg (sample)
+Amount: ½ tablet (sample)
+Meal: breakfast
+Timing: after
+Time: 09:00
+Days: daily

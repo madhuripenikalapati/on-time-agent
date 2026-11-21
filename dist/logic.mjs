@@ -14,3 +14,36 @@ export function classify(raw, phase, final = true) {
   if (/^(?:(?:సరే|అవును|హ్మ్|ఆ|sare|avunu|hmm+|aa+|okay|ok|yes)(?:\s+|$))+$/u.test(text)) return 'continue';
   return 'unclear';
 }
+
+export function prescriptionDraft(text) {
+  const fields = new Map(text.split(/\r?\n/u).map(line => {
+    const split = line.indexOf(':');
+    return split < 0 ? ['', ''] : [line.slice(0, split).trim().toLowerCase(), line.slice(split + 1).trim()];
+  }));
+  const draft = {};
+  for (const name of ['name', 'strength', 'amount', 'meal', 'timing', 'time', 'days']) {
+    const value = fields.get(name);
+    if (value) draft[name] = value;
+  }
+  return draft;
+}
+
+export function refillDates({ stock, units, days, lead }, today) {
+  const stockCount = Number(stock);
+  const unitsPerDose = Number(units);
+  const leadDays = Number(lead);
+  if (!String(stock).trim() || !Number.isFinite(stockCount) || stockCount < 0 ||
+      !Number.isFinite(unitsPerDose) || unitsPerDose <= 0 || !Number.isInteger(leadDays) || leadDays < 0) return null;
+  const schedule = days === 'daily' ? [0,1,2,3,4,5,6] : days === 'mon-thu' ? [1,4] : [];
+  const count = Math.floor((stockCount + Number.EPSILON) / unitsPerDose);
+  if (!schedule.length || count > 10000) return null;
+  const date = new Date(today);
+  date.setHours(0,0,0,0);
+  let remaining = count;
+  for (; !schedule.includes(date.getDay()) || remaining > 0; date.setDate(date.getDate() + 1)) {
+    if (schedule.includes(date.getDay())) remaining--;
+  }
+  const reminder = new Date(date);
+  reminder.setDate(reminder.getDate() - leadDays);
+  return { runOut: date, reminder };
+}

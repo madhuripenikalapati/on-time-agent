@@ -1,10 +1,10 @@
-import { classify } from './logic.mjs';
+import { classify, prescriptionDraft, refillDates } from './logic.mjs';
 import { clips } from './audio-lines.mjs';
 
 const get = id => document.getElementById(id);
 const key = 'on-time-agent-v1';
-const defaultPlan = {name:'Demo Medicine A', strength:'10 mg (sample)', amount:'½ tablet (sample)', meal:'breakfast', timing:'after', time:'09:00', delay:30, follow:true, share:true, photo:''};
-const initial = () => ({plan:{...defaultPlan}, outcome:'No check-in yet', detail:'', events:[], due:null});
+const defaultPlan = {name:'Demo Medicine A', strength:'10 mg (sample)', amount:'½ tablet (sample)', meal:'breakfast', days:'daily', timing:'after', time:'09:00', delay:30, follow:true, share:true, photo:''};
+const initial = () => ({plan:{...defaultPlan}, outcome:'No check-in yet', detail:'', events:[], due:null, reminders:{}});
 function load() {
   try { return JSON.parse(localStorage.getItem(key)) ?? initial(); } catch { return initial(); }
 }
@@ -12,6 +12,7 @@ const caregiverOnly = new URLSearchParams(location.search).get('view') === 'care
 if (caregiverOnly) document.body.classList.add('caregiver-only');
 let state = load();
 let phase = 'ready';
+let pendingReview = false;
 let words = '';
 let speechVersion = 0;
 let recognition;
@@ -38,7 +39,7 @@ function setPhase(next) {
   get('mic').disabled = !active || !Recognition;
   get('end').disabled = !active;
   get('repeat').disabled = !active;
-  get('start').disabled = active || state.due !== null;
+  get('start').disabled = active || state.due !== null || pendingReview;
   get('examples').replaceChildren();
   const examples = {
     explaining:['Sare', 'Aagandi, ee tablet?', 'Continue to question'],
@@ -91,7 +92,32 @@ function say(line, finished) {
   assist('Agent', line);
   play(line, finished);
 }
+const dateLabel = new Intl.DateTimeFormat(undefined,{dateStyle:'medium'});
+const timeLabel = new Intl.DateTimeFormat(undefined,{dateStyle:'medium', timeStyle:'short'});
+function renderReminders() {
+  const reminders = state.reminders ?? {};
+  const items = [];
+  const now = Date.now();
+  if (reminders.refill) {
+    const {due, runOut} = reminders.refill;
+    items.push((due <= now ? 'Refill reminder due' : 'Refill reminder ' + dateLabel.format(due)) +
+      ' · ' + state.plan.name + ' · First dose without enough estimated stock: ' + dateLabel.format(runOut));
+  }
+  if (reminders.visit) {
+    const {name, at, due} = reminders.visit;
+    items.push(name + ' · ' + timeLabel.format(at) + ' · ' +
+      (due <= now ? (at <= now ? 'Appointment time reached' : 'Reminder due') : 'Remind on ' + timeLabel.format(due)));
+  }
+  const visible = state.plan.share ? items : [];
+  get('reminder-summary').replaceChildren(...(visible.length ? visible : ['No shared reminders']).map(line => {
+    const item = document.createElement('li');
+    item.textContent = line;
+    return item;
+  }));
+  get('reminder-status').textContent = items.join(' | ');
+}
 function renderCaregiver() {
+  renderReminders();
   get('outcome').textContent = state.plan.share ? state.outcome : 'Sharing is off';
   get('detail').textContent = state.plan.share ? state.detail : 'The patient has not opted into caregiver updates.';
   get('activity').replaceChildren(...(state.plan.share ? state.events : []).map(event => {
@@ -125,7 +151,7 @@ function report(outcome, detail) {
   persist();
 }
 function start(callback = false) {
-  if (caregiverOnly || (callback && state.due === null)) return;
+  if (caregiverOnly || pendingReview || (callback && state.due === null)) return;
   state.due = null;
   get('transcript').replaceChildren();
   get('pack').hidden = true;
@@ -268,7 +294,7 @@ planForm.onsubmit = async event => {
   event.preventDefault();
   const data = new FormData(planForm);
   const file = get('photo-upload').files[0];
-  let photo = state.plan.photo;
+  let photo = data.get('name') === state.plan.name && data.get('strength') === state.plan.strength ? state.plan.photo : '';
   if (file) {
     if (!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size > 750000) {
       get('plan-status').textContent = 'Choose a PNG, JPEG, or WebP under 750 KB.';
@@ -282,18 +308,120 @@ planForm.onsubmit = async event => {
     });
     if (!photo) { get('plan-status').textContent = 'Could not read the photo.'; return; }
   }
-  const updated = { ...initial(), plan:{name:data.get('name'), strength:data.get('strength'), amount:data.get('amount'), meal:data.get('meal'), timing:data.get('timing'), time:data.get('time'), delay:Number(data.get('delay')), follow:data.has('follow'), share:data.has('share'), photo} };
+  const updated = { ...initial(), reminders:{visit:state.reminders?.visit, fields:Object.fromEntries(Object.entries(state.reminders?.fields ?? {}).filter(([name]) => name.startsWith('appointment')))}, plan:{name:data.get('name'), strength:data.get('strength'), amount:data.get('amount'), meal:data.get('meal'), days:data.get('days'), timing:data.get('timing'), time:data.get('time'), delay:Number(data.get('delay')), follow:data.has('follow'), share:data.has('share'), photo} };
   const former = state;
   state = updated;
   if (!persist()) { state = former; return; }
+  pendingReview = false;
   stopAudio();
   recognition?.abort();
   get('pack').hidden = true;
   get('transcript').replaceChildren();
   setPhase('ready');
-  get('plan-status').textContent = 'Reviewed demo care plan saved.';
+  get('reminders').elements.namedItem('stock').value = '';
+  get('plan-status').textContent = 'Reviewed demo care plan saved. Enter a fresh stock count to estimate a refill.';
   planForm.elements.namedItem('review').checked = false;
 };
+let previewUrl;
+function clearPreview() {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  previewUrl = undefined;
+  for (const id of ['source-text','source-photo','source-pdf','source-link']) get(id).hidden = true;
+}
+function reviewDraft(text) {
+  clearPreview();
+  get('source-text').textContent = text;
+  get('source-text').hidden = false;
+  const draft = prescriptionDraft(text);
+  for (const [name,value] of Object.entries(draft)) {
+    const input = planForm.elements.namedItem(name);
+    if (input instanceof HTMLSelectElement && !Array.from(input.options).some(option => option.value === value)) continue;
+    if (input) input.value = value;
+  }
+  get('source-status').textContent = Object.keys(draft).length
+    ? 'Draft populated from the text file. Compare every field with the source before saving.'
+    : 'Enter the schedule manually, then review it against this source.';
+}
+function beginReview() {
+  if (!['ready','done','waiting'].includes(phase)) {
+    get('source-status').textContent = 'End this demo call before loading another prescription.';
+    return false;
+  }
+  pendingReview = true;
+  planForm.elements.namedItem('review').checked = false;
+  get('start').disabled = true;
+  return true;
+}
+get('prescription').onchange = async () => {
+  const file = get('prescription').files[0];
+  if (!file) return;
+  const isText = /\.txt$/i.test(file.name);
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  const isImage = ['image/png','image/jpeg','image/webp'].includes(file.type);
+  if ((!isText && !isPdf && !isImage) || file.size > (isText ? 25000 : 5000000)) {
+    get('source-status').textContent = 'Choose a small TXT file, PDF, JPEG, PNG, or WebP.';
+    return;
+  }
+  if (!beginReview()) return;
+  if (isText) {
+    const text = await file.text();
+    if (get('prescription').files[0] === file) reviewDraft(text);
+    return;
+  }
+  clearPreview();
+  previewUrl = URL.createObjectURL(file);
+  if (isPdf) {
+    get('source-pdf').data = previewUrl;
+    get('source-pdf').hidden = false;
+    get('source-link').href = previewUrl;
+    get('source-link').hidden = false;
+  } else {
+    get('source-photo').src = previewUrl;
+    get('source-photo').hidden = false;
+  }
+  get('source-status').textContent = 'File opened locally. Enter or confirm the fields below against the document.';
+};
+get('sample').onclick = async () => {
+  if (!beginReview()) return;
+  get('prescription').value = '';
+  try {
+    const response = await fetch('./sample-prescription.txt');
+    if (!response.ok) throw new Error('sample unavailable');
+    const text = await response.text();
+    if (!get('prescription').files.length) reviewDraft(text);
+  } catch {
+    get('source-status').textContent = 'Couldn’t load the sample. You can still review and save the plan below.';
+  }
+};
+get('reminders').onsubmit = event => {
+  event.preventDefault();
+  if (pendingReview) {
+    get('reminder-status').textContent = 'Save the reviewed plan before estimating a refill.';
+    return;
+  }
+  const data = new FormData(event.target);
+  const stock = data.get('stock');
+  const appointment = data.get('appointment').trim();
+  const appointmentTime = data.get('appointmentTime');
+  if (Boolean(appointment) !== Boolean(appointmentTime)) {
+    get('reminder-status').textContent = 'Enter both an appointment name and a date and time.';
+    return;
+  }
+  const dates = refillDates({stock, units:data.get('units'), days:state.plan.days ?? 'daily', lead:data.get('lead')}, new Date());
+  if (stock && !dates) {
+    get('reminder-status').textContent = 'Check the stock count and tablets per dose.';
+    return;
+  }
+  const at = new Date(appointmentTime).getTime();
+  state.reminders = {
+    fields:Object.fromEntries(data),
+    refill: dates ? {due:dates.reminder.getTime(), runOut:dates.runOut.getTime()} : null,
+    visit: appointment ? {name:appointment, at, due:at - Number(data.get('appointmentLead')) * 3600000} : null,
+  };
+  persist();
+  if (!stock && !appointment) get('reminder-status').textContent = 'Reminders cleared.';
+};
+setInterval(renderReminders, 30000);
 window.addEventListener('storage', event => {
   if (event.key !== key) return;
   state = load();
@@ -306,6 +434,10 @@ window.addEventListener('storage', event => {
 if (!caregiverOnly) {
   setPhase(state.due === null ? 'ready' : 'waiting');
   fillPlan();
+  for (const [name,value] of Object.entries(state.reminders?.fields ?? {})) {
+    const input = get('reminders').elements.namedItem(name);
+    if (input) input.value = value;
+  }
   scheduleTimer();
 }
 renderCaregiver();
