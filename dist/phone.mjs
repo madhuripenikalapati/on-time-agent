@@ -218,23 +218,60 @@ export function mountPhone(root, id, { stage = false } = {}) {
     if (!quiet && data?.ring) ring();
   }
 
-  // Indian ring cadence: 400/450 Hz, 0.4s on, 0.2s off, 0.4s on, 2s off.
+  // A loud "trring-trring" bell, in the Indian cadence (0.4 s on, 0.2 s off, 0.4 s on, 2 s off).
+  // The old 400/450 Hz tones at 6% volume were too faint: small phone speakers barely play low
+  // tones. Bright tones (1000/1400 Hz) warbled 20 times a second like a telephone bell carry much
+  // further, and a limiter keeps the near-full volume from crackling.
+  let ringOut = null;
+  function ringOutput() {
+    if (ringOut) return ringOut;
+    const limiter = audioContext.createDynamicsCompressor();
+    limiter.threshold.value = -6;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.05;
+    const master = audioContext.createGain();
+    master.gain.value = 1;
+    master.connect(limiter).connect(audioContext.destination);
+    return (ringOut = master);
+  }
   function ring() {
     screen = 'ringing';
     render();
     if (!audioContext) return;
+    audioContext.resume?.();
     const burst = start => {
-      for (const freq of [400, 450]) {
+      const out = ringOutput();
+      const envelope = audioContext.createGain();
+      envelope.gain.setValueAtTime(0, start);
+      envelope.gain.linearRampToValueAtTime(0.9, start + 0.01);
+      envelope.gain.setValueAtTime(0.9, start + 0.39);
+      envelope.gain.linearRampToValueAtTime(0, start + 0.4);
+      // The bell's warble: switch the sound fully on and off 20 times a second.
+      const warble = audioContext.createGain();
+      warble.gain.value = 0.5;
+      const lfo = audioContext.createOscillator();
+      lfo.type = 'square';
+      lfo.frequency.value = 20;
+      const depth = audioContext.createGain();
+      depth.gain.value = 0.5;
+      lfo.connect(depth).connect(warble.gain);
+      warble.connect(envelope).connect(out);
+      lfo.start(start);
+      lfo.stop(start + 0.42);
+      for (const [freq, level] of [[1000, 0.55], [1400, 0.45]]) {
         const osc = audioContext.createOscillator();
         const gain = audioContext.createGain();
+        osc.type = 'triangle';
         osc.frequency.value = freq;
-        gain.gain.value = 0.06;
-        osc.connect(gain).connect(audioContext.destination);
+        gain.gain.value = level;
+        osc.connect(gain).connect(warble);
         osc.start(start);
-        osc.stop(start + 0.4);
+        osc.stop(start + 0.42);
       }
     };
-    const cycle = () => { const t = audioContext.currentTime; burst(t); burst(t + 0.6); };
+    const cycle = () => { const t = audioContext.currentTime + 0.02; burst(t); burst(t + 0.6); };
     // Nobody picked up within 45 seconds: a missed call.
     clearTimeout(unanswered);
     unanswered = setTimeout(async () => {
