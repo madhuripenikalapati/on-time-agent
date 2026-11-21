@@ -60,3 +60,8 @@ test('a plausible misreading that wins only 3 of 5 is flagged, not trusted', () 
   assert.equal(out.medicines[0].nickname, null);
   assert.ok(out.medicines[0].doubt);
 });
+
+test('"Vitamin D₃" and "Vitamin D3" are the same reading', () => {
+  const out = voteReadings([read(row('Vitamin D₃', '60000 IU', null, 'Vitamin D tablet')), read(row('Vitamin D3', '60000 IU', null, 'Vitamin D tablet')), read(row('Vitamin D3', '60000 IU', null, 'Vitamin D tablet'))]);
+  assert.equal(out.medicines[0].doubt, null);
+});

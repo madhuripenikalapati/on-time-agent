@@ -358,7 +358,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
         editor.medicines = unique.map(row => ({
           name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '',
           nickname: row.nickname ?? '', use: row.use ?? '', aiNickname: Boolean(row.nickname || row.use),
-          meal: row.meal ?? '', timing: row.timing ?? '', time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '', doubt: row.doubt ?? '',
+          // Indian prescriptions write "before food" when it matters; otherwise it is taken after the meal.
+          meal: row.meal ?? '', timing: row.timing ?? (row.meal ? 'after' : ''), assumedTiming: !row.timing && Boolean(row.meal), time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '', doubt: row.doubt ?? '',
           courseDays: /^\d{1,3}$/.test(String(row.duration_days ?? '')) && +row.duration_days >= 1 && +row.duration_days <= 365 ? +row.duration_days : '',
         }));
         reviewed.checked = false;
@@ -495,12 +496,18 @@ export function mountFamily(root, id, { stage = false } = {}) {
         return;
       }
       if (!reviewed.checked) { toast('Tick “I checked every medicine against the prescription” first.', 'bad'); return; }
-      const missing = editor.medicines.find(m => !m.name || !m.meal || !m.timing || !m.days);
-      if (missing) { toast('Fill the name, meal, timing and days for ' + (missing.name || 'every medicine') + '.', 'bad'); return; }
+      const index = editor.medicines.findIndex(m => !m.name || (!m.meal && !m.time) || !m.timing || !m.days);
+      if (index >= 0) {
+        const m = editor.medicines[index];
+        const gaps = [!m.name && 'the medicine name', !m.meal && !m.time && 'which meal (or a usual time)', !m.timing && 'before or after the meal', !m.days && 'which days'].filter(Boolean);
+        toast((m.name || 'Medicine ' + (index + 1)) + ': choose ' + gaps.join(', ') + '.', 'bad');
+        list.children[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
       editor.settings = { followUpMinutes: Number(followMinutes.value) || 30, allowFollowUp: allowFollow.checked, shareWithFamily: share.checked, autoCalls: autoCalls.checked };
       save.disabled = true;
       try {
-        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, doubt, ...m }) => m) });
+        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, doubt, assumedTiming, ...m }) => m) });
         toast('Plan saved. On Time will use it on the next call.');
         editor = null;
         tab = 'today';
@@ -657,7 +664,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         f('Strength', input('strength', { placeholder: '40 mg', maxlength: 40 }), 'strength'),
         f('Dose', input('amount', { placeholder: '1 tablet', maxlength: 40 }), 'amount'),
         f('With meal', select('meal', [['breakfast', 'Breakfast'], ['lunch', 'Lunch'], ['dinner', 'Dinner']]), 'meal'),
-        f('Timing', select('timing', [['after', 'After meal'], ['before', 'Before meal'], ['fixed', 'Fixed time']]), 'timing'),
+        f(m.assumedTiming ? 'Timing · not written, so after meal' : 'Timing', select('timing', [['after', 'After meal'], ['before', 'Before meal'], ['fixed', 'Fixed time']]), 'timing'),
         f('Usual time', input('time', { type: 'time' })),
         f('Days', select('days', DAY_OPTIONS), 'days'),
         courseField(m, redraw),
