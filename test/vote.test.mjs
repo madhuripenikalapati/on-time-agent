@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { voteReadings } from '../lib/openai.mjs';
+import { voteReadings, expandPatterns } from '../lib/openai.mjs';
 
 const row = (name, strength, meal, nickname, use = null) => ({ name, strength, amount: '1 tablet', nickname, use, duration_days: '30', meal, timing: null, time: null, days: 'daily', source: name });
 const read = (...medicines) => ({ medicines: medicines.flat(), notes: '' });
@@ -39,4 +39,16 @@ test('a spelling in doubt keeps its simple name only when every reading agrees o
   const out = voteReadings([read(row('Nifeduce ER', '20 mg', 'breakfast', 'BP tablet')), read(row('Nifepine ER', '20 mg', 'breakfast', 'BP tablet')), read(row('Nifecor ER', '20 mg', 'breakfast', 'BP tablet'))]);
   assert.equal(out.medicines[0].nickname, 'BP tablet');
   assert.ok(out.medicines[0].doubt);
+});
+
+test('a written 1-0-1 becomes breakfast and dinner even if the reading wrote one row', () => {
+  const out = expandPatterns({ notes: '', medicines: [{ ...row('Nifedipine ER', '20 mg', 'breakfast', 'BP tablet'), pattern: '1-0-1' }, { ...row('Ketogen DS', null, 'lunch', 'Kidney tablet'), pattern: '0-1-0' }, { ...row('Telma', '40 mg', 'breakfast', 'BP tablet'), pattern: '½-0-0' }] });
+  assert.deepEqual(out.medicines.map(m => [m.name, m.meal, m.amount]), [
+    ['Nifedipine ER', 'breakfast', '1 tablet'], ['Nifedipine ER', 'dinner', '1 tablet'], ['Ketogen DS', 'lunch', '1 tablet'], ['Telma', 'breakfast', '½ tablet'],
+  ]);
+});
+
+test('rows without a written pattern are kept as the reading gave them', () => {
+  const rows = [row('Lyncipro', '500 mg', null, 'Antibiotic'), row('Lyncipro', '500 mg', 'dinner', 'Antibiotic')];
+  assert.equal(expandPatterns({ notes: '', medicines: rows }).medicines.length, 2);
 });
