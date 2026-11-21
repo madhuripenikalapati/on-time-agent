@@ -275,7 +275,14 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const readButton = h('button', { class: 'btn primary', disabled: true, onclick: read }, icon('sparkle'), 'Read prescription with AI');
     const drop = h('label', { class: 'dropzone' }, fileInput,
       h('strong', {}, 'Upload prescription photos or PDFs'),
-      h('span', { class: 'muted small' }, 'As many pages as you have · printed or handwritten · AI drafts every medicine for you to check'));
+      h('span', { class: 'muted small' }, 'As many pages as you have · printed or handwritten'));
+    const steps = h('ol', { class: 'rx-steps' },
+      h('li', {}, h('b', {}, 'Upload'), ' the prescription.'),
+      h('li', {}, h('b', {}, 'AI fills in'), ' each medicine, dose and time for you.'),
+      h('li', {}, h('b', {}, 'You check'), ' every medicine against the paper, correct anything wrong, then save.'));
+    const caution = h('p', { class: 'notice warn' }, 'AI can misread handwriting. Nothing is used on a call until you have checked and saved it.');
+    // The pages stay on screen next to the plan, so each line can be compared with the paper.
+    const compare = h('div', { class: 'compare' });
     drop.addEventListener('dragover', event => { event.preventDefault(); drop.classList.add('over'); });
     drop.addEventListener('dragleave', () => drop.classList.remove('over'));
     drop.addEventListener('drop', event => { event.preventDefault(); drop.classList.remove('over'); choose([...chosen, ...Array.from(event.dataTransfer.files)]); });
@@ -358,7 +365,16 @@ export function mountFamily(root, id, { stage = false } = {}) {
         drawList();
         // A name the readings disagreed on gets no suggestion until the family corrects it.
         await suggestNames(editor.medicines.filter(m => !m.doubt && (!m.nickname || !m.use)));
-        status.replaceChildren(h('p', { class: 'notice' }, '✨ Drafted ' + unique.length + ' medicine' + (unique.length > 1 ? 's' : '') + ' from ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '. Check every highlighted field against the prescription, then save.' + (notes.length ? ' Note: ' + notes.join(' ') : '')));
+        const unsure = editor.medicines.filter(m => m.doubt).length;
+        // Line-by-line doubts are shown on each medicine; keep only the model's own remarks here.
+        const remarks = notes.map(n => n.replace(/^Please check against the prescription:.*?\.(?= [A-Z][a-z]|$)/s, '').replace(/Line \d+ was read as [^.]*\./g, '').trim()).filter(Boolean);
+        status.replaceChildren(h('div', { class: 'notice' + (unsure ? ' warn' : '') },
+          h('b', {}, '✨ AI filled in ' + unique.length + ' medicine' + (unique.length > 1 ? 's' : '') + ' from ' + chosen.length + ' page' + (chosen.length > 1 ? 's' : '') + '. '),
+          unsure ? unsure + (unsure === 1 ? ' is' : ' are') + ' marked “AI wasn’t sure”: check those first. ' : '',
+          'Now compare every medicine below with the prescription, correct anything wrong, and save.',
+          remarks.length ? h('div', { class: 'small', style: 'margin-top:6px' }, 'AI noted: ' + remarks.join(' ')) : null));
+        compare.replaceChildren(h('span', { class: 'muted small' }, 'Your prescription (tap to enlarge):'),
+          ...chosen.filter(f => f.type !== 'application/pdf').map(f => { const url = URL.createObjectURL(f); return h('a', { href: url, target: '_blank', rel: 'noopener' }, h('img', { src: url, alt: 'Prescription page' })); }));
       } catch (error) {
         status.replaceChildren(h('p', { class: 'notice bad' }, error.message));
       } finally {
@@ -472,13 +488,19 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const share = h('input', { type: 'checkbox', checked: editor.settings.shareWithFamily });
 
     const save = h('button', { class: 'btn primary', onclick: async () => {
-      if (!reviewed.checked) { toast('Tick “I checked this against the prescription” first.', 'bad'); return; }
+      const unsure = editor.medicines.filter(m => m.doubt);
+      if (unsure.length) {
+        toast(unsure.length + (unsure.length === 1 ? ' medicine is' : ' medicines are') + ' still marked “AI wasn’t sure”. Correct or confirm ' + (unsure.length === 1 ? 'it' : 'them') + ' first.', 'bad');
+        list.querySelector('.med.doubt')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      if (!reviewed.checked) { toast('Tick “I checked every medicine against the prescription” first.', 'bad'); return; }
       const missing = editor.medicines.find(m => !m.name || !m.meal || !m.timing || !m.days);
       if (missing) { toast('Fill the name, meal, timing and days for ' + (missing.name || 'every medicine') + '.', 'bad'); return; }
       editor.settings = { followUpMinutes: Number(followMinutes.value) || 30, allowFollowUp: allowFollow.checked, shareWithFamily: share.checked, autoCalls: autoCalls.checked };
       save.disabled = true;
       try {
-        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, ...m }) => m) });
+        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, doubt, ...m }) => m) });
         toast('Plan saved. On Time will use it on the next call.');
         editor = null;
         tab = 'today';
@@ -499,9 +521,9 @@ export function mountFamily(root, id, { stage = false } = {}) {
       h('datalist', { id: 'nicknames' }, names.map(value => h('option', { value }))),
       h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, 'Medicines'), h('p', {}, 'Upload the prescription, check what AI drafted, and add a photo of each pack so ' + data.patient.name + ' can match it on the call.'))),
       h('div', { class: 'stack' },
-        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Prescription')), drop, pages, h('div', { class: 'row' }, readButton), status),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Prescription')), steps, drop, pages, h('div', { class: 'row' }, readButton), caution, status),
         h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine packs at home'), h('p', { class: 'hint' }, 'Optional, but it makes the “which tablet?” moment work with her own strips.'))), packDrop, packThumbs, h('div', { class: 'row' }, scanButton), packStatus),
-        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine plan'), h('p', { class: 'hint' }, 'Highlighted fields were unclear or missing. The simple name is what On Time says on the call (“Sugar tablet”), so nobody has to read brand names on the call.'))), list),
+        h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Medicine plan'), h('p', { class: 'hint' }, 'Check every medicine against the prescription and correct anything wrong. Orange means AI wasn’t sure or something is missing. The simple name is what On Time says on the call (“Sugar tablet”).'))), compare, list),
         h('section', { class: 'card' }, h('h2', {}, 'Calls'), h('p', { class: 'hint' }, 'How On Time talks to ' + data.patient.name + '.'),
           h('div', { class: 'settings' },
             h('div', { class: 'field wide' }, 'Family', h('div', { class: 'family-line' },
@@ -512,7 +534,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
             h('label', { class: 'check' }, autoCalls, 'Call automatically at each medicine time'),
             h('label', { class: 'check' }, allowFollow, 'Allow a follow-up call if a dose isn’t taken yet'),
             h('label', { class: 'check' }, share, 'Share call results with family'))),
-        h('div', { class: 'savebar' }, h('label', { class: 'check' }, reviewed, 'I checked this against the prescription'), save),
+        h('div', { class: 'savebar' }, h('label', { class: 'check' }, reviewed, 'I checked every medicine against the prescription'), save),
       ),
     );
   }
@@ -620,14 +642,17 @@ export function mountFamily(root, id, { stage = false } = {}) {
       if (!file) return;
       try { m.photo = await shrinkImage(file); redraw(); } catch (error) { toast(error.message, 'bad'); }
     } });
-    return h('div', { class: 'med' },
+    return h('div', { class: 'med' + (m.doubt ? ' doubt' : '') },
+      m.doubt ? h('div', { class: 'doubt-banner' },
+        h('span', {}, '⚠ AI wasn’t sure about this one. It read: ', h('b', {}, m.doubt), '. Check the prescription, correct the name if needed, then confirm.'),
+        h('button', { class: 'btn small', onclick: () => { m.doubt = ''; if (!m.nickname || m.aiNickname) suggestNamesFor([m]); redraw(); } }, '✓ Confirm')) : null,
       h('div', { class: 'pack-slot' },
         h('label', { class: 'pack-thumb', title: 'Add a photo of the pack' }, photoInput,
           m.photo ? h('img', { src: m.photo, alt: 'Pack photo' }) : h('span', { class: 'add' }, icon('camera'), h('br'), 'Add pack photo')),
         m.photo ? h('button', { class: 'btn small ghost', onclick: () => { m.photo = ''; redraw(); } }, 'Remove photo') : null),
       h('div', { class: 'fields' },
-        h('label', { class: 'field wide' + (!m.name || m.doubt ? ' missing' : '') }, m.doubt ? 'Medicine · AI readings differ (' + m.doubt + '), please check' : 'Medicine (as written)',
-          input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: event => { m.doubt = ''; event.target.closest('.field')?.classList.toggle('missing', !m.name); if (!m.nickname || m.aiNickname) suggestNamesFor([m]); } })),
+        h('label', { class: 'field wide' + (!m.name || m.doubt ? ' missing' : '') }, 'Medicine (as written)',
+          input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: () => { const wasUnsure = Boolean(m.doubt); m.doubt = ''; if (!m.nickname || m.aiNickname) suggestNamesFor([m]); if (wasUnsure) redraw(); } })),
         f(m.aiNickname ? 'Simple name · AI suggested, please check' : 'Simple name (what they call it)', input('nickname', { placeholder: 'e.g. Sugar tablet', maxlength: 40, list: 'nicknames', oninput: event => { m.nickname = event.target.value; m.aiNickname = false; } }), 'nickname', 'wide' + (m.aiNickname ? ' suggested' : '')),
         f('Strength', input('strength', { placeholder: '40 mg', maxlength: 40 }), 'strength'),
         f('Dose', input('amount', { placeholder: '1 tablet', maxlength: 40 }), 'amount'),
