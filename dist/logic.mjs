@@ -5,6 +5,10 @@ export function classify(raw, phase, final = true) {
   if (!final) return stop ? 'yield' : 'wait';
   if (/మ్యాచ్ (అవ్వట్లేదు|కాలేదు)|తప్పు ప్యాక్|\b(wrong pack|does not match|doesn't match|match avvatledu)\b/u.test(text)) return 'mismatch';
   if (/ఏ (టాబ్లెట్|మందు)|ఈ టాబ్లెట్|\b(ee tablet|ye tablet|which (tablet|pack|medicine))\b/u.test(text)) return 'pack';
+  if (/^(ఇంకా లేదు|ఇంక లేదు|లేదు|inka (ledu|ledhu)|not yet|no)$/u.test(text)) {
+    if (phase === 'meal') return 'meal-late';
+    if (phase === 'dose') return 'unconfirmed';
+  }
   if (/తినలేదు|బ్రేక్.?ఫాస్ట్ కాలేదు|\b(inka (breakfast )?(cheyyaledu|tinaledu)|haven't eaten|not eaten|breakfast is late)\b/u.test(text)) return 'meal-late';
   if (/వేసుకోలేదు|తీసుకోలేదు|గుర్తు లేదు|తెలియదు|\b(vesukoledu|teesukoledu|not taken|didn't take|unsure|not sure)\b/u.test(text)) return 'unconfirmed';
   if (stop) return 'yield';
