@@ -261,6 +261,10 @@ export function mountPhone(root, id, { stage = false } = {}) {
       setupMessage ? h('div', { class: 'soft small' }, setupMessage) : null);
   }
 
+  const captureMicrophone = () => navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  });
+
   async function unlock(quiet = false) {
     error = '';
     try {
@@ -269,7 +273,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       if (replayAudio) {
         replayInput = audioContext.createMediaStreamDestination();
         microphone = replayInput.stream;
-      } else microphone = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      } else microphone = await captureMicrophone();
       screen = 'idle';
       clockTimer ??= setInterval(() => { if (screen === 'idle') render(); }, 15000);
     } catch (e) {
@@ -361,6 +365,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
   }
 
   async function answer() {
+    const reusingMic = microphone?.getAudioTracks().some(track => track.readyState === 'live');
     if (!microphone?.getAudioTracks().some(track => track.readyState === 'live')) {
       microphone = null;
       await unlock(true);
@@ -374,7 +379,15 @@ export function mountPhone(root, id, { stage = false } = {}) {
     turns = [];
     agentState = 'speaking';
     try {
-      await audioContext.resume();
+      const resume = audioContext.resume();
+      const appleMobile = /iPhone|iPad|iPod/.test(navigator.userAgent)
+        || (/Mac/.test(navigator.platform) && navigator.maxTouchPoints > 1);
+      if (appleMobile && reusingMic && !replayAudio) {
+        const previous = microphone;
+        microphone = await captureMicrophone();
+        for (const track of previous.getTracks()) track.stop();
+      }
+      await resume;
       callMicTrack = replayAudio ? null : microphone.getAudioTracks()[0];
       for (const event of ['mute', 'unmute', 'ended']) callMicTrack?.addEventListener(event, showMicState);
       audioContext.addEventListener('statechange', showMicState);
@@ -386,7 +399,12 @@ export function mountPhone(root, id, { stage = false } = {}) {
       const doseQuestions = started.medicines.map(m => ({
         medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name: m.nickname || m.name }),
       }));
-      voice = new VoiceCall({ secret: started.secret.value, microphone, audioContext, mode, onTool, onUpdate, farewell, doseQuestions, structuredDoseQuestions: true });
+      const greetingKey = /declined|not answered/i.test(call.reason ?? '') ? 'greetingAgain'
+        : call.kind === 'followup' ? 'greetingFollowUp' : 'greeting';
+      const greeting = fill(lang.phrases[greetingKey], {
+        address: data.patient.callName || data.patient.name + lang.honorific,
+      });
+      voice = new VoiceCall({ secret: started.secret.value, microphone, audioContext, mode, onTool, onUpdate, farewell, greeting, doseQuestions, structuredDoseQuestions: true });
       await voice.connect();
       startedAt = Date.now();
       screen = 'call';

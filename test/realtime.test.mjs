@@ -418,3 +418,20 @@ test('the fresh dose response requests only the selected language acknowledgment
   assert.equal(call.doseAnswer.medicineId, 'a');
   call.hangUp();
 });
+
+test('the opening greeting plays before the agent can ask a dose question', () => {
+  const { call, sent } = harness();
+  call.greeting = 'నమస్కారం అండి. నేను On Time నుంచి మాట్లాడుతున్నాను.';
+  call.startGreeting();
+  assert.equal(sent.at(-1).response.tool_choice, 'none');
+  assert.match(sent.at(-1).response.instructions, /నమస్కారం/);
+  call.handle({ type: 'response.created', response: { id: 'intro' } });
+  call.handle({ type: 'output_audio_buffer.started', response_id: 'intro' });
+  call.handle({ type: 'response.done', response: { id: 'intro', status: 'completed', output: [said(call.greeting)] } });
+  call.callerTurn();
+  assert.equal(sent.filter(e => e.type === 'response.create').length, 1);
+  call.handle({ type: 'output_audio_buffer.stopped', response_id: 'intro' });
+  assert.equal(sent.filter(e => e.type === 'response.create').length, 2);
+  assert.equal(sent.at(-1).response, undefined);
+  call.hangUp();
+});

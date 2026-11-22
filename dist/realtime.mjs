@@ -96,9 +96,9 @@ export class VoiceCall {
    * @param {(name: string, args: object) => Promise<object>} options.onTool
    * @param {(event: object) => void} options.onUpdate UI updates
    */
-  constructor({ secret, microphone, audioContext, mode = 'ontime', onTool, onUpdate, farewell, doseQuestions = [], structuredDoseQuestions = false }) {
+  constructor({ secret, microphone, audioContext, mode = 'ontime', onTool, onUpdate, farewell, greeting, doseQuestions = [], structuredDoseQuestions = false }) {
     // farewell: the two goodbye lines in the patient's language, for the safety-net goodbye.
-    Object.assign(this, { secret, microphone, audioContext, mode, onTool, onUpdate, farewell });
+    Object.assign(this, { secret, microphone, audioContext, mode, onTool, onUpdate, farewell, greeting });
     this.doseQuestions = doseQuestions;
     this.structuredDoseQuestions = structuredDoseQuestions;
     this.audio = new Audio();
@@ -146,7 +146,16 @@ export class VoiceCall {
     this.hygiene = setInterval(() => {
       if (!this.current && !this.awaitingCommit.length) this.send({ type: 'input_audio_buffer.clear' });
     }, 1500);
-    this.requestResponse(); // the agent speaks first
+    this.startGreeting();
+  }
+
+  startGreeting() {
+    if (!this.greeting) { this.requestResponse(); return; }
+    this.greetingPending = true;
+    this.requestResponse({
+      tool_choice: 'none',
+      instructions: 'Speak only this opening greeting in the call language, with no question or other words: ' + JSON.stringify(this.greeting),
+    });
   }
 
   send(event) {
@@ -175,6 +184,7 @@ export class VoiceCall {
     this.clearIdle();
     this.spokeSinceCaller = false;
     this.waitingUntil = 0; // the patient is back
+    if (this.greetingPlayback) return;
     if (this.packCheck) {
       this.requestResponse({
         tool_choice: { type: 'function', name: 'interpret_pack_reply' },
@@ -239,6 +249,10 @@ export class VoiceCall {
         this.responseActive = true;
         this.agentText = '';
         this.openDoseQuestion = null;
+        if (this.greetingPending) {
+          this.greetingPending = false;
+          this.greetingPlayback = event.response?.id;
+        }
         if (this.pendingDoseQuestion) {
           this.dosePlayback = { question: this.pendingDoseQuestion, id: event.response?.id };
           this.pendingDoseQuestion = null;
@@ -265,8 +279,14 @@ export class VoiceCall {
         this.agentSpeaking = false;
         this.duck(false);
         this.update({ type: 'agent-quiet' });
-        if (this.ending) setTimeout(() => this.hangUp('ended'), 400);
-        else this.armIdle();
+        if (this.greetingPlayback && this.greetingPlayback === event.response_id) {
+          this.greetingPlayback = null;
+          this.requestResponse();
+        } else if (this.ending) {
+          setTimeout(() => this.hangUp('ended'), 400);
+        } else {
+          this.armIdle();
+        }
         break;
 
       case 'response.output_audio_transcript.delta':
@@ -300,6 +320,13 @@ export class VoiceCall {
         const output = event.response?.output ?? [];
         const calls = output.filter(item => item.type === 'function_call');
         const messages = output.filter(item => item.type === 'message');
+        if (this.greetingPlayback && this.greetingPlayback === event.response?.id) {
+          if (!messages.length || (event.response.status && event.response.status !== 'completed')) {
+            this.greetingPlayback = null;
+            this.requestResponse();
+          }
+          break;
+        }
         if (messages.length) this.spokeSinceCaller = true;
         // Did the agent end this very turn on a question? Then it has no answer yet.
         const said = messages.flatMap(m => m.content ?? []).map(c => c.transcript ?? c.text ?? '').join(' ').trim();
