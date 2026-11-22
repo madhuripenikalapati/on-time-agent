@@ -385,6 +385,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       const farewell = { language: lang.name, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
       const uncertainDialogue = data.patient?.language === 'te' ? {
         clarify: 'క్షమించండి అండి, ఒక్కసారి చెప్తారా?',
+        taken: 'సరే అండి, వేసుకున్నట్టు నమోదు చేశాను.',
         unconfirmed: 'సరే అండి. ఈ మందు వేసుకున్నారో లేదో తెలియలేదు. తీసుకున్నట్టు నమోదు చేయలేదు.',
       } : null;
       const doseQuestions = started.medicines.map(m => ({

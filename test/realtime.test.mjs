@@ -438,3 +438,17 @@ test('two uncertain Telugu replies ask once, save only Unconfirmed, and play a T
   assert.match(sent.at(-1).response.instructions, /తీసుకున్నట్టు నమోదు చేయలేదు.*జాగ్రత్తగా ఉండండి/);
   call.hangUp();
 });
+
+test('a clear Telugu confirmation saves before a localized acknowledgment and goodbye', async () => {
+  const { call, tools, sent } = harness();
+  call.doseQuestions = [{ medicineId: 'a', text: 'BP tablet వేసుకున్నారా అండి?' }];
+  call.uncertainDialogue = { taken: 'వేసుకున్నట్టు నమోదు చేశాను.' };
+  call.farewell = { language: 'Telugu', done: 'జాగ్రత్తగా ఉండండి.' };
+  call.doseAnswer = call.doseQuestions[0];
+  await call.runTools([tool('interpret_dose_reply', { result: 'taken' })], false);
+  assert.deepEqual(tools.map(t => t.name), ['record_dose', 'end_call']);
+  assert.equal(tools[0].args.status, 'taken');
+  assert.equal(sent.at(-1).response.tool_choice, 'none');
+  assert.match(sent.at(-1).response.instructions, /వేసుకున్నట్టు నమోదు చేశాను.*జాగ్రత్తగా ఉండండి/);
+  call.hangUp();
+});

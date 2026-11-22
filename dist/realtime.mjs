@@ -194,7 +194,7 @@ export class VoiceCall {
       this.requestResponse({
         output_modalities: ['text'],
         tool_choice: { type: 'function', name: 'interpret_dose_reply' },
-        instructions: 'Silently classify only the latest fresh reply to the dose question. If they do not remember, are not sure, or give an ambiguous answer about whether they took this dose, return unsure. A clear report of taken or not taken, future intent, or a separate request is other. Understand dialects and mixed languages by meaning. Call the tool only.',
+        instructions: 'Silently classify only the latest fresh reply to the dose question. Return taken only for a clear report they already took this exact dose. Return unsure if they do not remember or their meaning is ambiguous. Return other for a clear negative, future intent, question, symptom, or mixed request. Never infer taken from uncertainty or politeness. Understand dialects and mixed languages by meaning. Call the tool only.',
       });
     } else if (this.doseAnswer && this.structuredDoseQuestions) {
       this.respondToDoseAnswer();
@@ -320,9 +320,9 @@ export class VoiceCall {
         const askedJustNow = /[?？]\s*$/u.test(said);
         if (askedJustNow && !this.structuredDoseQuestions) this.doseAnswer = null;
         if (calls.length) this.runTools(calls, this.spokeSinceCaller, askedJustNow);
-        else if (this.continueAfterUncertainty) {
-          this.continueAfterUncertainty = false;
-          this.requestResponse({ instructions: 'Continue with ask_dose for the next unresolved medicine. The previous dose was saved as unconfirmed; do not ask about it again or assume it was taken.' });
+        else if (this.continueAfterDoseNotice) {
+          this.continueAfterDoseNotice = false;
+          this.requestResponse({ instructions: 'Continue with ask_dose for the next unresolved medicine. The previous dose result is already saved; do not ask about it again.' });
         }
         else if (this.wantResponse) {
           const { response, doseQuestion } = this.wantResponse;
@@ -445,7 +445,7 @@ export class VoiceCall {
     let blocked = false;
     let askDose = null;
     let clarifyDose = false;
-    let announceUnconfirmed = false;
+    let doseNotice = null;
     let interpretOther = false;
     for (const call of calls) {
       let args = {};
@@ -457,6 +457,13 @@ export class VoiceCall {
           const dose = this.doseAnswer;
           if (!this.uncertainDialogue || !dose) {
             output = { ok: false, error: 'No fresh dose answer is available.' };
+          } else if (args.result === 'taken') {
+            this.doseAnswer = null;
+            output = await this.onTool('record_dose', { medicine_id: dose.medicineId, status: 'taken', note: 'Patient clearly reported taking this dose.' });
+            if (output?.ok) {
+              this.resolvedDoses.add(dose.medicineId);
+              doseNotice = 'taken';
+            }
           } else if (args.result !== 'unsure') {
             interpretOther = true;
             output = { ok: true, note: 'The app will respond to this reply.' };
@@ -470,7 +477,7 @@ export class VoiceCall {
             output = await this.onTool('record_dose', { medicine_id: dose.medicineId, status: 'unsure', note: 'Patient remained unsure after clarification.' });
             if (output?.ok) {
               this.resolvedDoses.add(dose.medicineId);
-              announceUnconfirmed = true;
+              doseNotice = 'unconfirmed';
             }
           }
         } else if (call.name === 'interpret_pack_reply') {
@@ -529,13 +536,15 @@ export class VoiceCall {
     if (!this.ending) {
       if (askDose) {
         this.askDoseQuestion(askDose, clarifyDose ? this.uncertainDialogue.clarify : '');
-      } else if (announceUnconfirmed) {
+      } else if (doseNotice) {
         const finalDose = this.doseQuestions.every(question => this.resolvedDoses.has(question.medicineId));
         if (finalDose) {
-          await this.onTool('end_call', { summary: 'The patient was still unsure after a clarification. The dose was saved as unconfirmed.' });
+          await this.onTool('end_call', { summary: doseNotice === 'unconfirmed'
+            ? 'The patient was still unsure after a clarification. The dose was saved as unconfirmed.'
+            : 'The patient reported taking the last checked dose. See the recorded outcomes for the full call.' });
         }
-        this.continueAfterUncertainty = !finalDose;
-        const line = this.uncertainDialogue.unconfirmed + (finalDose && this.farewell?.done ? ' ' + this.farewell.done : '');
+        this.continueAfterDoseNotice = !finalDose;
+        const line = this.uncertainDialogue[doseNotice] + (finalDose && this.farewell?.done ? ' ' + this.farewell.done : '');
         this.requestResponse({ tool_choice: 'none', instructions: 'Say exactly this and nothing else: ' + JSON.stringify(line) });
         if (finalDose) {
           this.ending = true;
