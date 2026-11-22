@@ -376,3 +376,33 @@ test('clearing a structured dose question prevents a partially played question f
   assert.equal(call.openDoseQuestion, null);
   call.hangUp();
 });
+
+test('a spoken pack match opens a fresh question and the first clear reply records its own dose', async () => {
+  const { call, tools, sent } = harness();
+  call.structuredDoseQuestions = true;
+  await call.runTools([tool('show_pack', { medicine_id: 'a' })], false);
+  call.handle({ type: 'response.done' });
+  call.callerTurn();
+  assert.equal(sent.at(-1).response.tool_choice.name, 'interpret_pack_reply');
+  call.handle({ type: 'response.done' });
+  await call.runTools([tool('interpret_pack_reply', { result: 'matches' })], false);
+  assert.equal(sent.at(-1).response.tool_choice, 'none');
+  assert.equal(call.doseAnswer, null);
+  call.handle({ type: 'response.created', response: { id: 'after-pack' } });
+  call.handle({ type: 'output_audio_buffer.started', response_id: 'after-pack' });
+  call.handle({ type: 'response.done', response: { id: 'after-pack', status: 'completed' } });
+  call.handle({ type: 'output_audio_buffer.stopped', response_id: 'after-pack' });
+  call.speechStarted();
+  call.utterances.set('yes', call.current);
+  call.current = null;
+  call.decide('yes', 'హా వేసుకున్నాలే');
+  assert.match(sent.at(-1).response.instructions, /record_dose/);
+  call.handle({ type: 'response.done' });
+  await call.runTools([
+    tool('record_dose', { medicine_id: 'b', status: 'taken' }, 'wrong'),
+    tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'right'),
+    tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'duplicate'),
+  ], true, true);
+  assert.deepEqual(tools.filter(entry => entry.name === 'record_dose').map(entry => entry.args.medicine_id), ['a']);
+  call.hangUp();
+});

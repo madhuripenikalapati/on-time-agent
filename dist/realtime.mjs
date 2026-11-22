@@ -159,7 +159,10 @@ export class VoiceCall {
 
   requestResponse(response, doseQuestion = null) {
     if (this.ending) return;
-    if (this.responseActive) { this.wantResponse = true; return; }
+    if (this.responseActive) {
+      this.wantResponse = { response, doseQuestion };
+      return;
+    }
     this.wantResponse = false;
     this.pendingDoseQuestion = doseQuestion;
     this.responseActive = true;
@@ -172,7 +175,41 @@ export class VoiceCall {
     this.clearIdle();
     this.spokeSinceCaller = false;
     this.waitingUntil = 0; // the patient is back
-    this.requestResponse();
+    if (this.packCheck) {
+      this.requestResponse({
+        tool_choice: { type: 'function', name: 'interpret_pack_reply' },
+        instructions: 'Classify the latest patient reply to the saved pack-label question by meaning in context. A clear label match is matches; a different or unreadable label is different; an ambiguous answer is unclear; an unrelated request or symptom is other. Call the tool only.',
+      });
+    } else if (this.doseAnswer && this.structuredDoseQuestions) {
+      this.requestResponse({
+        instructions: 'Interpret the latest fresh reply to the dose question for medicine ID ' + JSON.stringify(this.doseAnswer.medicineId)
+          + '. If they clearly report they already took this dose, call record_dose for that ID with status taken now. Do not ask them to repeat a clear confirmation. For future intent, negation, or unclear meaning, follow the existing confirmation instructions.',
+      });
+    } else {
+      this.requestResponse();
+    }
+  }
+
+  askDoseQuestion(question) {
+    this.doseAnswer = null;
+    this.openDoseQuestion = null;
+    this.requestResponse({
+      tool_choice: 'none',
+      instructions: 'Speak only this dose question in the language of the call, then wait: ' + JSON.stringify(question.text),
+    }, question);
+  }
+
+  confirmPack(medicineId) {
+    const question = this.doseQuestions.find(entry => entry.medicineId === medicineId);
+    if (!question) return;
+    this.packCheck = null;
+    this.clearIdle();
+    this.questionRetried = false;
+    if (this.agentSpeaking) this.yieldFloor();
+    this.send({ type: 'conversation.item.create', item: {
+      type: 'message', role: 'user', content: [{ type: 'input_text', text: '(I checked the pack label and it matches.)' }],
+    } });
+    this.askDoseQuestion(question);
   }
 
   duck(on) {
@@ -261,9 +298,12 @@ export class VoiceCall {
         // Did the agent end this very turn on a question? Then it has no answer yet.
         const said = messages.flatMap(m => m.content ?? []).map(c => c.transcript ?? c.text ?? '').join(' ').trim();
         const askedJustNow = /[?？]\s*$/u.test(said);
-        if (askedJustNow) this.doseAnswer = null;
+        if (askedJustNow && !this.structuredDoseQuestions) this.doseAnswer = null;
         if (calls.length) this.runTools(calls, this.spokeSinceCaller, askedJustNow);
-        else if (this.wantResponse) this.requestResponse();
+        else if (this.wantResponse) {
+          const { response, doseQuestion } = this.wantResponse;
+          this.requestResponse(response, doseQuestion);
+        }
         break;
       }
 
@@ -358,7 +398,10 @@ export class VoiceCall {
       // Remove it so the model never treats "సరే" as the answer to a later question.
       this.send({ type: 'conversation.item.delete', item_id: itemId });
       if (decision === 'backchannel') this.logTurn(transcript, 'backchannel', reason, utterance);
-      if (!speakingWhenStarted && decision === 'noise' && this.wantResponse) this.requestResponse();
+      if (!speakingWhenStarted && decision === 'noise' && this.wantResponse && !this.responseActive) {
+        const { response, doseQuestion } = this.wantResponse;
+        this.requestResponse(response, doseQuestion);
+      }
       return;
     }
     if (decision === 'yield' && !utterance.yielded) {
@@ -383,7 +426,26 @@ export class VoiceCall {
       let output;
       try {
         // Guard: never record a dose the patient hasn't answered about yet.
-        if (call.name === 'ask_dose') {
+        if (call.name === 'interpret_pack_reply') {
+          const pack = this.packCheck;
+          if (!pack) {
+            output = { ok: false, error: 'No pack check is active.' };
+          } else if (args.result === 'matches') {
+            this.packCheck = null;
+            askDose = pack;
+            output = { ok: true, note: 'Label matched. The app will ask about the dose now.' };
+          } else if (args.result === 'different') {
+            this.packCheck = null;
+            output = await this.onTool('flag_for_family', {
+              kind: 'pack_mismatch', medicine_id: pack.medicineId, note: 'Patient said the pack label did not match or could not be read.',
+            });
+          } else {
+            if (args.result === 'other') this.packCheck = null;
+            output = { ok: true, note: args.result === 'other'
+              ? 'Respond to the latest unrelated question or symptom. No pack or dose was confirmed.'
+              : 'Ask once whether the name and strength on their label match. Do not ask about the dose yet.' };
+          }
+        } else if (call.name === 'ask_dose') {
           askDose = this.doseQuestions.find(question => question.medicineId === args.medicine_id) ?? null;
           output = askDose ? { ok: true, note: 'The app will speak this question. Wait for a new reply.' } : { ok: false, error: 'Unknown medicine on this call.' };
         } else if (call.name === 'wait_for_patient') {
@@ -394,13 +456,18 @@ export class VoiceCall {
             ? { ok: true, note: 'Waiting quietly. Say nothing until the patient speaks.' }
             : { ok: true, note: 'You have not said anything yet. Now say the "not taken yet" line out loud (can you take it now? I will stay on the line), in the patient\'s language. Do not call any tool. Then wait quietly.' };
           if (!this.agentSpeaking) this.armIdle();
-        } else if (call.name === 'record_dose' && (askedJustNow || args.medicine_id !== this.doseAnswer?.medicineId)) {
+        } else if (call.name === 'record_dose' && ((!this.structuredDoseQuestions && askedJustNow) || args.medicine_id !== this.doseAnswer?.medicineId)) {
           output = { ok: false, error: 'Not recorded: a fresh answer to this medicine’s dose question is required. Use ask_dose for this medicine and wait for the patient’s new answer.' };
           blocked = askedJustNow;
           this.update({ type: 'guard', message: 'Blocked a dose record before the patient answered' });
         } else {
           if (call.name === 'record_dose') this.doseAnswer = null;
           output = await this.onTool(call.name, args);
+          if (call.name === 'show_pack' && output?.ok && this.structuredDoseQuestions) {
+            this.packCheck = this.doseQuestions.find(question => question.medicineId === args.medicine_id) ?? null;
+            this.doseAnswer = null;
+            this.openDoseQuestion = null;
+          }
         }
       } catch (error) {
         output = { ok: false, error: error.message };
@@ -413,12 +480,7 @@ export class VoiceCall {
     const onlyWaiting = calls.every(call => call.name === 'wait_for_patient');
     if (!this.ending) {
       if (askDose) {
-        this.doseAnswer = null;
-        this.openDoseQuestion = null;
-        this.requestResponse({
-          tool_choice: 'none',
-          instructions: 'Speak only this dose question in the language of the call, then wait: ' + JSON.stringify(askDose.text),
-        }, askDose);
+        this.askDoseQuestion(askDose);
       } else if (!blocked && !(onlyWaiting && spoke)) {
         this.requestResponse();
       }

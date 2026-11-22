@@ -412,7 +412,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
   async function packAnswer(matches) {
     if (savingMismatch || !pack || !call) return;
     if (matches) {
-      voice?.tell('(On screen, the patient tapped: the label on the pack in my hand matches.)');
+      voice?.confirmPack(pack.id);
       pack = null;
       render();
       return;
@@ -422,6 +422,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
     error = '';
     try {
       await send({ type: 'alert', kind: 'pack_mismatch', medicineId: medicine.id, note: 'Patient reported a different or unreadable pack label.' });
+      if (voice) voice.packCheck = null;
       voice?.tell('(The patient tapped that the pack label differs or is unreadable. The app has already notified the caregiver and saved the dose as unconfirmed.)');
     } catch {
       error = 'Could not notify the caregiver. Tap “Different / can’t read” again to retry.';
