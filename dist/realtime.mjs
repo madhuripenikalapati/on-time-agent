@@ -23,20 +23,25 @@ const LONG_SPEECH_MS = 2000; // still talking this long over the agent is never 
 // "సరే while it talks" impossible. So the server's detector is off and this decides when
 // the caller starts and stops; only finished utterances are sent for transcription.
 export class VoiceDetector {
-  constructor(stream, { onStart, onEnd }) {
+  constructor(stream, { context, onStart, onEnd }) {
     this.stream = stream;
-    Object.assign(this, { onStart, onEnd });
+    Object.assign(this, { context, onStart, onEnd });
+    this.ownsContext = !context;
     this.speaking = false;
     this.voiced = 0;
     this.lastVoiceAt = 0;
     this.floor = 0.004;
   }
   async start() {
-    this.context = new AudioContext();
+    this.context ??= new AudioContext();
     await this.context.resume();
     this.analyser = this.context.createAnalyser();
     this.analyser.fftSize = 1024;
-    this.context.createMediaStreamSource(this.stream).connect(this.analyser);
+    this.source = this.context.createMediaStreamSource(this.stream);
+    this.silentOutput = this.context.createGain();
+    this.silentOutput.gain.value = 0;
+    // Keep the microphone graph running without playing the caller's voice back.
+    this.source.connect(this.analyser).connect(this.silentOutput).connect(this.context.destination);
     this.samples = new Float32Array(this.analyser.fftSize);
     this.timer = setInterval(() => this.tick(), 20);
   }
@@ -73,7 +78,10 @@ export class VoiceDetector {
   }
   stop() {
     clearInterval(this.timer);
-    this.context?.close().catch(() => {});
+    this.source?.disconnect();
+    this.analyser?.disconnect();
+    this.silentOutput?.disconnect();
+    if (this.ownsContext) this.context?.close().catch(() => {});
   }
 }
 
@@ -86,9 +94,9 @@ export class VoiceCall {
    * @param {(name: string, args: object) => Promise<object>} options.onTool
    * @param {(event: object) => void} options.onUpdate UI updates
    */
-  constructor({ secret, microphone, mode = 'ontime', onTool, onUpdate, farewell, doseQuestions = [] }) {
+  constructor({ secret, microphone, audioContext, mode = 'ontime', onTool, onUpdate, farewell, doseQuestions = [] }) {
     // farewell: the two goodbye lines in the patient's language, for the safety-net goodbye.
-    Object.assign(this, { secret, microphone, mode, onTool, onUpdate, farewell });
+    Object.assign(this, { secret, microphone, audioContext, mode, onTool, onUpdate, farewell });
     this.doseQuestions = doseQuestions;
     this.audio = new Audio();
     this.audio.autoplay = true;
@@ -129,7 +137,7 @@ export class VoiceCall {
     if (!response.ok) throw new Error('Could not start the voice call (' + response.status + ').');
     await this.pc.setRemoteDescription({ type: 'answer', sdp: await response.text() });
     await opened;
-    this.detector = new VoiceDetector(this.microphone, { onStart: () => this.speechStarted(), onEnd: () => this.speechEnded() });
+    this.detector = new VoiceDetector(this.microphone, { context: this.audioContext, onStart: () => this.speechStarted(), onEnd: () => this.speechEnded() });
     await this.detector.start();
     // Drop silence (and any echo) that piles up in the input buffer between utterances.
     this.hygiene = setInterval(() => {

@@ -255,3 +255,31 @@ test('a split avunu cannot answer a new dose question or be reused for another m
   assert.deepEqual(tools.map(entry => entry.args.medicine_id), ['a']);
   call.hangUp();
 });
+
+test('microphone analysis uses the already unlocked context and does not close it', async () => {
+  const destination = {};
+  const graph = [];
+  const disconnected = [];
+  const node = name => ({
+    name,
+    connect(target) { graph.push([name, target]); return target; },
+    disconnect() { disconnected.push(name); },
+  });
+  const source = node('microphone');
+  const analyser = node('analyser');
+  const gain = { ...node('gain'), gain: { value: 1 } };
+  const context = {
+    destination,
+    resume: async () => {},
+    createMediaStreamSource: () => source,
+    createAnalyser: () => analyser,
+    createGain: () => gain,
+    close: () => assert.fail('The phone owns the unlocked audio context'),
+  };
+  const detector = new VoiceDetector({}, { context });
+  await detector.start();
+  detector.stop();
+  assert.deepEqual(graph, [['microphone', analyser], ['analyser', gain], ['gain', destination]]);
+  assert.equal(gain.gain.value, 0);
+  assert.deepEqual(disconnected, ['microphone', 'analyser', 'gain']);
+});

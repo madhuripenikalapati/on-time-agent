@@ -19,6 +19,12 @@ export function mountPhone(root, id, { stage = false } = {}) {
   let data = null;
   let screen = 'locked';
   let microphone = null;
+  let callMicTrack = null;
+  const showMicState = () => {
+    const unavailable = callMicTrack && (callMicTrack.muted || callMicTrack.readyState !== 'live' || audioContext?.state !== 'running');
+    const notice = phone.querySelector('.mic-notice');
+    if (notice) notice.hidden = !unavailable;
+  };
   const replayAudio = stage && new URLSearchParams(location.search).get('debug') === 'audio';
   let replayInput;
   let replaySource;
@@ -141,6 +147,9 @@ export function mountPhone(root, id, { stage = false } = {}) {
       pack && pack.id !== handoffAlert()?.medicineId ? packView() : null,
       handoffView(),
       replayPicker,
+      h('div', { class: 'error-banner mic-notice', role: 'status', hidden: !callMicTrack
+        || (!callMicTrack.muted && callMicTrack.readyState === 'live' && audioContext?.state === 'running') },
+        'Microphone audio is unavailable. Check microphone access and reconnect if it stays muted.'),
       h('div', { class: 'caption te', 'aria-live': 'polite' }, caption || '…', heard ? h('span', { class: 'you' }, '🗣 ' + heard) : null),
       error ? h('div', { class: 'error-banner' }, error) : null,
       h('div', { class: 'call-foot' }, h('button', { class: 'round hangup', 'aria-label': 'Hang up', onclick: () => voice?.hangUp('hung-up') }, icon('phone'))),
@@ -255,7 +264,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
   async function unlock(quiet = false) {
     error = '';
     try {
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      audioContext ??= new (window.AudioContext || window.webkitAudioContext)();
       await audioContext.resume();
       if (replayAudio) {
         replayInput = audioContext.createMediaStreamDestination();
@@ -352,7 +361,8 @@ export function mountPhone(root, id, { stage = false } = {}) {
   }
 
   async function answer() {
-    if (!microphone) {
+    if (!microphone?.getAudioTracks().some(track => track.readyState === 'live')) {
+      microphone = null;
       await unlock(true);
       if (!microphone) { screen = 'locked'; render(); return; }
     }
@@ -364,6 +374,10 @@ export function mountPhone(root, id, { stage = false } = {}) {
     turns = [];
     agentState = 'speaking';
     try {
+      await audioContext.resume();
+      callMicTrack = replayAudio ? null : microphone.getAudioTracks()[0];
+      for (const event of ['mute', 'unmute', 'ended']) callMicTrack?.addEventListener(event, showMicState);
+      audioContext.addEventListener('statechange', showMicState);
       const started = await api.startCall(id, {});
       call = started.call;
       data = started.household;
@@ -371,7 +385,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       const farewell = { language: lang.name, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
       const doseQuestions = started.medicines.flatMap(m => [...new Set([m.nickname, m.name].filter(Boolean))]
         .map(name => ({ medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name }) })));
-      voice = new VoiceCall({ secret: started.secret.value, microphone, mode, onTool, onUpdate, farewell, doseQuestions });
+      voice = new VoiceCall({ secret: started.secret.value, microphone, audioContext, mode, onTool, onUpdate, farewell, doseQuestions });
       await voice.connect();
       startedAt = Date.now();
       screen = 'call';
@@ -379,6 +393,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       const tick = setInterval(() => { if (screen !== 'call') clearInterval(tick); else phone.querySelector('.pill.live')?.replaceChildren(timer()); }, 1000);
     } catch (e) {
       error = e.message;
+      stopWatchingMic();
       voice?.hangUp('failed');
       api.cancelRing(id).catch(() => {});
       screen = 'ended';
@@ -478,7 +493,14 @@ export function mountPhone(root, id, { stage = false } = {}) {
     if (screen === 'call') render();
   }
 
+  function stopWatchingMic() {
+    for (const event of ['mute', 'unmute', 'ended']) callMicTrack?.removeEventListener(event, showMicState);
+    callMicTrack = null;
+    audioContext?.removeEventListener('statechange', showMicState);
+  }
+
   async function ended(reason) {
+    stopWatchingMic();
     await flush();
     if (reason !== 'ended' && call) {
       try { await api.events(id, call.id, [{ type: 'end', summary: '' }]); } catch {}
