@@ -2,6 +2,8 @@
 
 **Builders '26 · Build Creative.** Snap the prescription of someone you care for (a parent, a grandparent, a spouse, anyone on daily medicines). On Time calls them in their own language at the right time, listens the way a person would, shows them the right pack when they're unsure, and tells the family how it went.
 
+On Time supports nine call languages: **Telugu, Hindi, Tamil, Kannada, Malayalam, Marathi, Bengali, Gujarati, and English**. The family chooses the patient's language during onboarding. The hackathon demo uses Telugu, and the project has also tested live calls in Hindi and Tamil.
+
 ## The journey
 
 0. **Onboarding.** Who is setting this up (family, a paid caretaker, or the patient themself), the patient's name and how On Time should greet them on the call ("అమ్మ", "నాన్న", "Lakshmi గారు"…), and the family members and caretakers, with one main contact. The agent mentions the main contact ("Priya గారికి చెప్తాను").
@@ -9,15 +11,15 @@
 1. **Prescription → plan.** Upload any number of photos or PDF pages (printed or handwritten). They are shrunk in the browser, read in batches of four, and merged, with duplicates across pages removed (up to 20 medicines). `gpt-4.1` drafts each medicine, dose, meal time and schedule (daily, Monday and Thursday, or once a week), leaving unclear fields blank. It also suggests a **simple name** for each one ("Glycomet → Sugar tablet", "Thyronorm → Thyroid tablet") so a patient who can't read brand names still knows which one is meant. Typing a medicine by hand fills in the same simple name and a plain "used for" line. Both are marked as AI suggestions until the family edits them. A family member checks and edits every field, adds a photo of each pack, and saves. A schedule the app doesn't recognise is rejected, never silently turned into "daily".
    **Courses:** "for 5 days" or "x 3 months" sets a course length, and "stat" becomes a single day. Calls stop the day after the course ends. The family sees "Day 3 of 10", then "Course finished". Refills check whether the strip will last until the end. On the last day the agent tells the patient they can stop from tomorrow.
 1b. **Scan the packs at home.** Photograph every strip or box. `gpt-4.1` reads each label, matches it to a medicine in the plan (never by the tablet's look), and counts the pockets that still hold a tablet. A closed box is left blank rather than guessed. The family reviews each match and count. The photo becomes that medicine's pack picture, so when the patient asks "ఈ tablet?" they see their own strip, and the tablet count drives refill reminders.
-2. **A real Telugu phone conversation.** At the scheduled time, the patient's phone rings. A Realtime voice agent (`gpt-realtime` over WebRTC) holds a natural Telugu conversation grounded in the saved plan. It can record a dose, show the pack, schedule a callback and alert the family through tool calls.
+2. **A voice check-in in the patient’s chosen language.** At the scheduled time, On Time sends a call alert to the patient’s phone. When they answer, a Realtime voice agent over WebRTC uses the saved plan to guide the conversation. It can record a dose, show the pack, schedule a callback and alert the family through tool calls.
 3. **The family sees it live.** The dashboard (any device) shows each dose as the patient reports it, the live transcript, alerts such as a pack mix-up or a new symptom, refill dates, and an English summary of every call.
 
 ## Models, chosen by testing
 
 | Job | Model | Why |
 |---|---|---|
-| Live Telugu call (listen, talk, tools, summary) | `gpt-realtime-2.1`, voice `marin`, a little slower for elders | Newest realtime model; much better Telugu than the original `gpt-realtime`. Voice chosen by recording 3 Telugu phrasebook lines in all 10 voices, transcribing them back for clarity, and having `gpt-audio-1.5` rank them head to head for native-sounding Telugu: `marin` scored highest overall |
-| Turning the caller's speech into text | `gpt-transcribe`, Telugu | Newest transcription model |
+| Live voice call (listen, talk, tools, summary) | `gpt-realtime-2.1`, voice `marin`, a little slower for elders | Newest realtime model; much better Telugu than the original `gpt-realtime`. Voice chosen by recording 3 Telugu phrasebook lines in all 10 voices, transcribing them back for clarity, and having `gpt-audio-1.5` rank them head to head for native-sounding Telugu: `marin` scored highest overall |
+| Turning the caller's speech into text | `gpt-transcribe`, configured for the call language | Transcribes replies in the patient’s chosen language |
 | Reading prescriptions (photos, PDFs) | `gpt-5.6-sol`, low reasoning, **read three times and voted** | On a real handwritten Indian prescription (8 medicines), seven models were compared. `gpt-5.2` called Met XL 50 (a BP tablet) a "Sugar tablet"; `gpt-5.6-sol` got it right in every run. Single readings still slipped now and then on look-alike names, so each page is read five times at once and a name or simple name is kept only if at least four readings agree. A line they disagree on is highlighted with all three readings and gets no simple name until the family checks it. 17–20 s per page |
 | Simple names ("Sugar tablet") and "used for" | `gpt-5.2`, low reasoning | `gpt-4.1-mini` called an antibiotic (Lyncipro) a "Sugar tablet"; `gpt-5.2` didn't |
 | Pack scanning (match + tablets left) | `gpt-5.2` with grid counting | 6/6 on real pack photos; `gpt-4.1` missed two |
@@ -56,15 +58,15 @@ Calls, the patient's phone screen and the call alert work in **Telugu, Hindi, Ta
 - **Automatic calls:** an EventBridge rule runs every minute. At each medicine time (the earliest time among that part of the day's medicines) it rings the phone, unless those doses are already reported taken. A ring nobody answers for 3 minutes becomes a missed call, and a follow-up rings later if the family allowed it. Follow-ups after a meal or an untaken dose ring automatically too. **Call now** on the family dashboard uses the same alert.
 - Alerts are Web Push with no payload: the push only wakes the phone, which then asks the server who is calling. Only a signed VAPID token is needed (Node's built-in crypto, no libraries). Push addresses are never sent back to browsers.
 
-## Avunu ≠ Aagandi: Telugu turn-taking
+## Multilingual turn-taking: Telugu demo
 
-Standard voice bots treat every sound the same. They stop on every "హ్మ్", or they talk over a real "ఆగండి". On Time runs its own turn-taking layer (`dist/turns.mjs`, `dist/realtime.mjs`) on top of the Realtime model. OpenAI's server voice detector is switched off, because over WebRTC it cuts the agent's audio on any sound, even with `interrupt_response` off. The browser detects when the caller starts and stops speaking, lowers the agent's voice at once, and sends each finished utterance for Telugu transcription. Then it decides: a listening sound means keep going, and anything else means yield.
+Standard voice bots treat every sound the same. They stop on every "హ్మ్", or they talk over a real "ఆగండి". On Time runs its own turn-taking layer (`dist/turns.mjs`, `dist/realtime.mjs`) on top of the Realtime model. OpenAI's server voice detector is switched off, because over WebRTC it cuts the agent's audio on any sound, even with `interrupt_response` off. The browser detects when the caller starts and stops speaking, lowers the agent's voice at once, and sends each finished utterance for transcription in the call’s language. It uses the transcript and speaking context to tell listening cues from interruptions and answers. The table uses examples from the Telugu demo.
 
 | The caller says | While the agent is… | On Time | A standard bot |
 |---|---|---|---|
 | "సరే", "అవును", "హ్మ్" | explaining | lowers its voice for a moment, then **keeps going** | stops mid-sentence |
 | "అవును" | waiting after a question | **records the answer** | same |
-| "ఆగండి, ఈ tablet?" | explaining | **stops at once**, then shows the pack | stops, but also stops on every "హ్మ్" |
+| "ఆగండి, ఈ tablet?" | explaining | **yields**, then shows the saved pack | stops, but also stops on every "హ్మ్" |
 | "సరే సరే… చాలు" | explaining | keeps listening through "సరే", **yields at "చాలు"** | stops at the first "సరే" |
 | pressure-cooker whistle, its own echo | explaining | ignores it | stops |
 
@@ -107,7 +109,7 @@ From AWS CloudShell, upload `on-time-agent-deploy.zip`, unzip it, and run the sa
 
 | Path | What it does |
 |---|---|
-| `dist/turns.mjs` | Telugu turn-taking classifier (listening sound, stop, question, echo, noise) |
+| `dist/turns.mjs` | Multilingual turn-taking classifier (listening sound, stop, question, echo, noise) |
 | `dist/realtime.mjs` | WebRTC call to OpenAI Realtime, ducking, yield, tool loop |
 | `dist/phone.mjs` | The patient's phone: ring, answer, live captions, pack card |
 | `dist/family.mjs` | Family dashboard: today, live call, alerts, medicines editor, call history |
