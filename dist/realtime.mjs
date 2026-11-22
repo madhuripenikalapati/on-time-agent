@@ -16,6 +16,8 @@ export function cleanText(text, { caller = false } = {}) {
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
+const QUESTION_RETRY_MS = 8000;
+const RETRIED_QUESTION_TIMEOUT_MS = 20000;
 const LONG_SPEECH_MS = 2000; // still talking this long over the agent is never just "hmm"
 
 // Voice activity detection in the browser. OpenAI's own detector cuts the agent's audio the
@@ -164,6 +166,8 @@ export class VoiceCall {
 
   // The caller said something: the agent owes them a spoken reply.
   callerTurn() {
+    this.questionRetried = false;
+    this.clearIdle();
     this.spokeSinceCaller = false;
     this.waitingUntil = 0; // the patient is back
     this.requestResponse();
@@ -259,7 +263,7 @@ export class VoiceCall {
     if (!/[?？]\s*$/u.test(text)) return null;
     const said = normalize(text).replace(/？/gu, '?');
     const matches = this.doseQuestions.filter(question => said.endsWith(normalize(question.text).replace(/？/gu, '?')));
-    return matches.length === 1 ? { medicineId: matches[0].medicineId } : null;
+    return matches.length === 1 ? { medicineId: matches[0].medicineId, text: matches[0].text } : null;
   }
 
   // The caller started speaking (from our voice detector).
@@ -297,6 +301,8 @@ export class VoiceCall {
     this.current = null;
     this.awaitingCommit.push(utterance);
     this.send({ type: 'input_audio_buffer.commit' });
+    // Keep a retry available when audio was detected but never produces usable words.
+    if (!this.agentSpeaking) this.armIdle();
   }
 
   decide(itemId, transcript) {
@@ -404,7 +410,7 @@ export class VoiceCall {
 
   // Something the patient did on screen (e.g. tapped "label matches"), told to the agent.
   // If nobody speaks after the agent finishes, wrap the call up instead of leaving the
-  // line open: 7s after a closing statement, 25s after an unanswered question.
+  // line open. Repeat an unanswered question once before ending the call.
   armIdle() {
     this.clearIdle();
     if (this.waitingUntil > Date.now()) {
@@ -416,17 +422,26 @@ export class VoiceCall {
       }, this.waitingUntil - Date.now());
       return;
     }
-    const asked = /[?？]\s*$/u.test(this.agentText.trim());
+    const question = this.openDoseQuestion?.text ?? this.agentText.trim().match(/[^.!?。！？]+[?？]$/u)?.[0]?.trim();
+    const retry = Boolean(question) && !this.questionRetried;
     this.idleTimer = setTimeout(() => {
-      if (this.closed || this.ending || this.responseActive || this.agentSpeaking) return;
+      if (this.closed || this.ending || this.responseActive || this.agentSpeaking || this.current) return;
+      if (retry) {
+        this.questionRetried = true;
+        this.requestResponse({
+          tool_choice: 'none',
+          instructions: 'The patient has not answered. In the language of the call, briefly say you may not have heard them, then repeat this exact question as the last sentence and wait: ' + JSON.stringify(question),
+        });
+        return;
+      }
       this.responseActive = true;
       this.send({ type: 'response.create', response: {
         tool_choice: { type: 'function', name: 'end_call' },
-        instructions: asked
+        instructions: question || this.questionRetried
           ? 'The patient did not answer. Call end_call now with an English summary that says what is still unconfirmed.'
           : 'The conversation is over. Call end_call now with the English summary. Do not say anything more.',
       } });
-    }, asked ? 25000 : 7000);
+    }, retry ? QUESTION_RETRY_MS : question || this.questionRetried ? RETRIED_QUESTION_TIMEOUT_MS : 7000);
   }
 
   clearIdle() {

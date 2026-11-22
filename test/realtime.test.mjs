@@ -90,17 +90,45 @@ test('silence after a closing statement wraps the call up after 7 seconds', () =
   }
 });
 
-test('an unanswered question waits 25 seconds, and a reply cancels the closer', () => {
+test('an unanswered dose question repeats once with tools off, then closes unconfirmed', () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   try {
     const { call, sent } = harness();
-    call.agentText = 'Sugar tablet వేసుకున్నారా?';
+    call.agentText = 'మంచిది అండి. Sugar tablet వేసుకున్నారా?';
     call.handle({ type: 'output_audio_buffer.stopped' });
-    mock.timers.tick(20000);
+    mock.timers.tick(7900);
     assert.equal(sent.some(e => e.type === 'response.create'), false);
+    mock.timers.tick(200);
+    const retry = sent.find(e => e.type === 'response.create');
+    assert.equal(retry.response.tool_choice, 'none');
+    assert.match(retry.response.instructions, /Sugar tablet వేసుకున్నారా\?/);
+    call.handle({ type: 'response.created' });
+    call.agentText = 'Sugar tablet వేసుకున్నారా?';
+    call.handle({ type: 'response.done' });
+    call.handle({ type: 'output_audio_buffer.stopped' });
+    mock.timers.tick(20100);
+    assert.equal(sent.filter(e => e.type === 'response.create').length, 2);
+    assert.deepEqual(sent.at(-1).response.tool_choice, { type: 'function', name: 'end_call' });
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('speech cancels the pending retry but unusable audio still gets a repeat', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const { call, sent } = harness();
+    call.agentText = 'BP tablet వేసుకున్నారా?';
+    call.handle({ type: 'output_audio_buffer.stopped' });
+    mock.timers.tick(7000);
     call.speechStarted();
-    mock.timers.tick(10000);
-    assert.equal(sent.some(e => e.response?.tool_choice?.name === 'end_call'), false);
+    mock.timers.tick(3000);
+    assert.equal(sent.some(e => e.type === 'response.create'), false);
+    call.speechEnded();
+    call.handle({ type: 'input_audio_buffer.committed', item_id: 'silent' });
+    call.handle({ type: 'conversation.item.input_audio_transcription.failed', item_id: 'silent' });
+    mock.timers.tick(8100);
+    assert.equal(sent.at(-1).response.tool_choice, 'none');
   } finally {
     mock.timers.reset();
   }
