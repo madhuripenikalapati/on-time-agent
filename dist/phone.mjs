@@ -383,9 +383,10 @@ export function mountPhone(root, id, { stage = false } = {}) {
       data = started.household;
       const lang = languageOf(data.patient?.language);
       const farewell = { language: lang.name, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
-      const doseQuestions = started.medicines.flatMap(m => [...new Set([m.nickname, m.name].filter(Boolean))]
-        .map(name => ({ medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name }) })));
-      voice = new VoiceCall({ secret: started.secret.value, microphone, audioContext, mode, onTool, onUpdate, farewell, doseQuestions });
+      const doseQuestions = started.medicines.map(m => ({
+        medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name: m.nickname || m.name }),
+      }));
+      voice = new VoiceCall({ secret: started.secret.value, microphone, audioContext, mode, onTool, onUpdate, farewell, doseQuestions, structuredDoseQuestions: true });
       await voice.connect();
       startedAt = Date.now();
       screen = 'call';

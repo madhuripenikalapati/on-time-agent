@@ -96,10 +96,11 @@ export class VoiceCall {
    * @param {(name: string, args: object) => Promise<object>} options.onTool
    * @param {(event: object) => void} options.onUpdate UI updates
    */
-  constructor({ secret, microphone, audioContext, mode = 'ontime', onTool, onUpdate, farewell, doseQuestions = [] }) {
+  constructor({ secret, microphone, audioContext, mode = 'ontime', onTool, onUpdate, farewell, doseQuestions = [], structuredDoseQuestions = false }) {
     // farewell: the two goodbye lines in the patient's language, for the safety-net goodbye.
     Object.assign(this, { secret, microphone, audioContext, mode, onTool, onUpdate, farewell });
     this.doseQuestions = doseQuestions;
+    this.structuredDoseQuestions = structuredDoseQuestions;
     this.audio = new Audio();
     this.audio.autoplay = true;
     this.agentSpeaking = false;
@@ -156,10 +157,11 @@ export class VoiceCall {
     this.onUpdate?.(event);
   }
 
-  requestResponse(response) {
+  requestResponse(response, doseQuestion = null) {
     if (this.ending) return;
     if (this.responseActive) { this.wantResponse = true; return; }
     this.wantResponse = false;
+    this.pendingDoseQuestion = doseQuestion;
     this.responseActive = true;
     this.send({ type: 'response.create', ...(response ? { response } : {}) });
   }
@@ -182,6 +184,7 @@ export class VoiceCall {
   yieldFloor() {
     if (this.responseActive) this.send({ type: 'response.cancel' });
     this.send({ type: 'output_audio_buffer.clear' });
+    this.dosePlayback = null;
     this.agentSpeaking = false;
     this.duck(false);
     this.update({ type: 'agent-stopped' });
@@ -193,18 +196,29 @@ export class VoiceCall {
         this.responseActive = true;
         this.agentText = '';
         this.openDoseQuestion = null;
+        if (this.pendingDoseQuestion) {
+          this.dosePlayback = { question: this.pendingDoseQuestion, id: event.response?.id };
+          this.pendingDoseQuestion = null;
+        }
         this.clearIdle();
         break;
 
       case 'output_audio_buffer.started':
+        if (this.dosePlayback && this.dosePlayback.id === event.response_id) this.dosePlayback.started = true;
         this.agentSpeaking = true;
         this.update({ type: 'agent-speaking' });
         break;
 
       case 'output_audio_buffer.stopped':
-        this.openDoseQuestion = this.doseQuestionFor(this.agentText);
+        if (this.dosePlayback?.started && this.dosePlayback.id === event.response_id) {
+          this.openDoseQuestion = this.dosePlayback.question;
+          this.dosePlayback = null;
+        } else if (!this.structuredDoseQuestions) {
+          this.openDoseQuestion = this.doseQuestionFor(this.agentText);
+        }
         // Fall through to the shared playback cleanup.
       case 'output_audio_buffer.cleared':
+        if (event.type === 'output_audio_buffer.cleared') this.dosePlayback = null;
         this.agentSpeaking = false;
         this.duck(false);
         this.update({ type: 'agent-quiet' });
@@ -238,6 +252,8 @@ export class VoiceCall {
 
       case 'response.done': {
         this.responseActive = false;
+        if (this.dosePlayback && this.dosePlayback.id === event.response?.id
+          && event.response?.status && event.response.status !== 'completed') this.dosePlayback = null;
         const output = event.response?.output ?? [];
         const calls = output.filter(item => item.type === 'function_call');
         const messages = output.filter(item => item.type === 'message');
@@ -360,13 +376,17 @@ export class VoiceCall {
 
   async runTools(calls, spoke, askedJustNow = false) {
     let blocked = false;
+    let askDose = null;
     for (const call of calls) {
       let args = {};
       try { args = JSON.parse(call.arguments || '{}'); } catch {}
       let output;
       try {
         // Guard: never record a dose the patient hasn't answered about yet.
-        if (call.name === 'wait_for_patient') {
+        if (call.name === 'ask_dose') {
+          askDose = this.doseQuestions.find(question => question.medicineId === args.medicine_id) ?? null;
+          output = askDose ? { ok: true, note: 'The app will speak this question. Wait for a new reply.' } : { ok: false, error: 'Unknown medicine on this call.' };
+        } else if (call.name === 'wait_for_patient') {
           // The patient went to take the tablet: keep the line open quietly for up to two minutes.
           this.waitingUntil = Date.now() + 120000;
           // Silence after "not yet" sounds like a dropped call: if nothing was said, say the line first.
@@ -375,7 +395,7 @@ export class VoiceCall {
             : { ok: true, note: 'You have not said anything yet. Now say the "not taken yet" line out loud (can you take it now? I will stay on the line), in the patient\'s language. Do not call any tool. Then wait quietly.' };
           if (!this.agentSpeaking) this.armIdle();
         } else if (call.name === 'record_dose' && (askedJustNow || args.medicine_id !== this.doseAnswer?.medicineId)) {
-          output = { ok: false, error: 'Not recorded: a fresh answer to this medicine’s dose question is required. Ask the exact dose question if you have not just asked it, then wait.' };
+          output = { ok: false, error: 'Not recorded: a fresh answer to this medicine’s dose question is required. Use ask_dose for this medicine and wait for the patient’s new answer.' };
           blocked = askedJustNow;
           this.update({ type: 'guard', message: 'Blocked a dose record before the patient answered' });
         } else {
@@ -391,7 +411,19 @@ export class VoiceCall {
     // After a blocked record the question is already out loud: wait for the patient. While
     // waiting for the patient to fetch a tablet, don't prompt the agent to talk again.
     const onlyWaiting = calls.every(call => call.name === 'wait_for_patient');
-    if (!this.ending) { if (!blocked && !(onlyWaiting && spoke)) this.requestResponse(); return; }
+    if (!this.ending) {
+      if (askDose) {
+        this.doseAnswer = null;
+        this.openDoseQuestion = null;
+        this.requestResponse({
+          tool_choice: 'none',
+          instructions: 'Speak only this dose question in the language of the call, then wait: ' + JSON.stringify(askDose.text),
+        }, askDose);
+      } else if (!blocked && !(onlyWaiting && spoke)) {
+        this.requestResponse();
+      }
+      return;
+    }
     setTimeout(() => this.hangUp('ended'), 15000); // safety net
     if (spoke) {
       // The agent already spoke since the caller's last reply; hang up once it has played.
@@ -427,7 +459,8 @@ export class VoiceCall {
       }, this.waitingUntil - Date.now());
       return;
     }
-    const question = this.openDoseQuestion?.text ?? this.agentText.trim().match(/[^.!?。！？]+[?？]$/u)?.[0]?.trim();
+    const doseQuestion = this.openDoseQuestion;
+    const question = doseQuestion?.text ?? this.agentText.trim().match(/[^.!?。！？]+[?？]$/u)?.[0]?.trim();
     const retry = Boolean(question) && !this.questionRetried;
     this.idleTimer = setTimeout(() => {
       if (this.closed || this.ending || this.responseActive || this.agentSpeaking || this.current) return;
@@ -436,7 +469,7 @@ export class VoiceCall {
         this.requestResponse({
           tool_choice: 'none',
           instructions: 'The patient has not answered. In the language of the call, briefly say you may not have heard them, then repeat this exact question as the last sentence and wait: ' + JSON.stringify(question),
-        });
+        }, doseQuestion);
         return;
       }
       this.responseActive = true;

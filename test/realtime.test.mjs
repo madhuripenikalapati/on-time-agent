@@ -332,3 +332,47 @@ test('a fresh Telugu reply can confirm its medicine after a question ending in �
   assert.deepEqual(tools.map(entry => entry.args.medicine_id), ['a']);
   call.hangUp();
 });
+
+test('a structured question binds a fresh Telugu, Hindi or English reply to one medicine', async () => {
+  for (const reply of ['హా తీసుకున్నాలే', 'हाँ जी, ले लिया था', 'Yep, I already had it']) {
+    const { call, tools, sent } = harness();
+    call.structuredDoseQuestions = true;
+    await call.runTools([tool('ask_dose', { medicine_id: 'a' })], false);
+    assert.equal(sent.at(-1).response.tool_choice, 'none');
+    call.handle({ type: 'response.created', response: { id: 'question-a' } });
+    call.handle({ type: 'output_audio_buffer.started', response_id: 'question-a' });
+    call.speechStarted();
+    call.utterances.set('too-early', call.current);
+    call.current = null;
+    call.handle({ type: 'output_audio_buffer.stopped', response_id: 'previous-audio' });
+    assert.equal(call.openDoseQuestion, null);
+    call.agentText = 'Different wording entirely';
+    call.handle({ type: 'response.done', response: { id: 'question-a', status: 'completed' } });
+    call.handle({ type: 'output_audio_buffer.stopped', response_id: 'question-a' });
+    call.decide('too-early', reply);
+    assert.equal(call.doseAnswer, null);
+    call.speechStarted();
+    call.utterances.set('fresh', call.current);
+    call.current = null;
+    call.decide('fresh', reply);
+    await call.runTools([
+      tool('record_dose', { medicine_id: 'b', status: 'taken' }, 'wrong'),
+      tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'right'),
+      tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'duplicate'),
+    ], false);
+    assert.deepEqual(tools.map(entry => entry.args.medicine_id), ['a']);
+    call.hangUp();
+  }
+});
+
+test('clearing a structured dose question prevents a partially played question from authorizing a dose', async () => {
+  const { call } = harness();
+  call.structuredDoseQuestions = true;
+  await call.runTools([tool('ask_dose', { medicine_id: 'a' })], false);
+  call.handle({ type: 'response.created', response: { id: 'cut-off' } });
+  call.handle({ type: 'output_audio_buffer.started', response_id: 'cut-off' });
+  call.handle({ type: 'output_audio_buffer.cleared', response_id: 'cut-off' });
+  call.handle({ type: 'output_audio_buffer.stopped', response_id: 'cut-off' });
+  assert.equal(call.openDoseQuestion, null);
+  call.hangUp();
+});
