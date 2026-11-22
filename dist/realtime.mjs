@@ -508,11 +508,13 @@ export class VoiceCall {
           blocked = askedJustNow;
           this.update({ type: 'guard', message: 'Blocked a dose record before the patient answered' });
         } else {
-          if (call.name === 'record_dose') this.doseAnswer = null;
+          // Start the "same answer" window when the save starts, not when it ends: the second breath
+          // ("…వేసుకున్నాను") often arrives while the save and the Telugu acknowledgment are playing.
+          if (call.name === 'record_dose') { this.doseAnswer = null; this.savedAt = Date.now(); }
           output = await this.onTool(call.name, args);
           // After a saved "taken", the only acknowledgment is the short yes line: in Telugu the app
           // has already played "మంచిది అండి"; other languages say their yes line once, nothing more.
-          if (call.name === 'record_dose' && output?.ok) this.savedAt = Date.now();
+          if (call.name === 'record_dose') this.savedAt = output?.ok ? Date.now() : 0;
           if (call.name === 'record_dose' && output?.ok && output.recorded === 'taken') {
             output = { ...output, note: this.farewell?.recordedConfirmation
               ? 'Saved. The app already played the acknowledgment. Do not thank or acknowledge again. Next: call ask_dose for the next medicine, or if every medicine is covered, say the goodbye line and call end_call.'
