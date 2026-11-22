@@ -3,7 +3,7 @@
 window.__run = { status: 'starting', played: [] };
 (async () => {
   const lang = { 'demo-telugu': 'te', 'demo-hindi': 'hi', 'demo-english': 'en' }[new URLSearchParams(location.search).get('h')];
-  const meal = { te: /టిఫిన్|భోజనం/, hi: /नाश्ता|खाना|भोजन/, en: /breakfast|lunch|dinner|eat/i }[lang];
+  const meal = { te: /టిఫిన్|భోజనం/, hi: /नाश्ता|खाना|भोजन|breakfast|lunch|dinner/i, en: /breakfast|lunch|dinner|eat/i }[lang];
   const st = () => window.onTimeDebug.state();
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const until = async (f, ms = 40000) => { const t = Date.now(); while (!f()) { if (Date.now() - t > ms) return false; await sleep(100); } return true; };

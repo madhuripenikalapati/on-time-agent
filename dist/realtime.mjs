@@ -100,6 +100,7 @@ export class VoiceCall {
     // farewell: the two goodbye lines in the patient's language, for the safety-net goodbye.
     Object.assign(this, { secret, microphone, audioContext, mode, onTool, onUpdate, farewell, greeting });
     this.doseQuestions = doseQuestions;
+    this.covered = new Set(); // medicine ids with a saved answer on this call
     this.structuredDoseQuestions = structuredDoseQuestions;
     this.audio = new Audio();
     this.audio.autoplay = true;
@@ -515,10 +516,19 @@ export class VoiceCall {
           // After a saved "taken", the only acknowledgment is the short yes line: in Telugu the app
           // has already played "మంచిది అండి"; other languages say their yes line once, nothing more.
           if (call.name === 'record_dose') this.savedAt = output?.ok ? Date.now() : 0;
+          // The app keeps track of what's covered and names the next medicine: left to itself, the
+          // model skipped medicines (Thyroid, Gas tablet, Vitamin D) and said goodbye early.
+          if (call.name === 'record_dose' && output?.ok) this.covered.add(args.medicine_id);
+          const left = this.doseQuestions.filter(question => !this.covered.has(question.medicineId)).map(question => question.medicineId);
+          const next = left.length
+            ? 'Next: call ask_dose with medicine_id ' + JSON.stringify(left[0]) + '. Still to ask on this call: ' + left.join(', ') + '. Do not say goodbye or end the call until every one of them is asked.'
+            : 'Every medicine on this call is covered: say the goodbye line and call end_call.';
           if (call.name === 'record_dose' && output?.ok && output.recorded === 'taken') {
             output = { ...output, note: this.farewell?.recordedConfirmation
-              ? 'Saved. The app already played the acknowledgment. Do not thank or acknowledge again. Next: call ask_dose for the next medicine, or if every medicine is covered, say the goodbye line and call end_call.'
-              : 'Saved. Say exactly ' + JSON.stringify(this.farewell?.confirmation ?? 'Good.') + ' and no other thanks or acknowledgment. Then call ask_dose for the next medicine, or if every medicine is covered, say the goodbye line and call end_call.' };
+              ? 'Saved. The app already played the acknowledgment. Do not thank or acknowledge again. ' + next
+              : 'Saved. Say exactly ' + JSON.stringify(this.farewell?.confirmation ?? 'Good.') + ' and no other thanks or acknowledgment. Then: ' + next };
+          } else if (call.name === 'record_dose' && output?.ok && this.structuredDoseQuestions) {
+            output = { ...output, still_to_ask: left };
           }
           if (call.name === 'show_pack' && output?.ok && this.structuredDoseQuestions) {
             this.packCheck = this.doseQuestions.find(question => question.medicineId === args.medicine_id) ?? null;
