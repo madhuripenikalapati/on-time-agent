@@ -1,4 +1,162 @@
-# On Time: handoff for coding agents
+# On Time: medicine check-in calls in the patient's own language
+
+**Live deployment (all AI features on, no setup needed): https://vqe7ihx8pe.execute-api.us-west-2.amazonaws.com**
+
+A family uploads an elderly person's prescription. AI drafts the medicine plan and the family checks and saves it. At each medicine time the patient's phone rings, and a voice agent speaks to them in their own language (Telugu, Hindi, Tamil, Kannada, Malayalam, Marathi, Bengali, Gujarati or English). It asks about each medicine by a simple name ("Sugar tablet"), shows the patient their own pack photo when they ask "which tablet?", and alerts the family about anything that needs a person.
+
+Two ideas make it work:
+- **"Avunu ≠ Aagandi":** the call can tell a listening sound ("సరే", "హ్మ్", "అవును") from a real interruption ("ఆగండి", "చాలు", "ఈ tablet?"). It keeps talking through the first and stops for the second. A standard voice bot stops on every sound.
+- **It refuses to guess about medicine:** each prescription page is read 5 times in parallel, the readings are voted on, and each is matched against 240,000 real Indian medicines. Anything the readings don't agree on is flagged for the family, and Save stays blocked until they check it.
+
+---
+
+## 1. Fastest way to review: use the live site
+
+The live site has every key configured (OpenAI, Web Push). You only need a browser: Chrome, Edge or Safari. A microphone is optional; section 5 shows how to drive a call without one.
+
+| Touch point | URL |
+|---|---|
+| Landing page | `/` |
+| Family dashboard (caregiver) | `/?h=<household id>` |
+| Patient's phone (call screen) | `/?h=<household id>&view=phone` |
+| Stage view (phone + dashboard side by side) | `/?h=<household id>&view=stage` |
+| Test samples (prescription and pack photos with known answers) | `/samples/index.html` |
+
+**Use your own household so parallel reviewers don't collide.** Each click on **Start setup** or **Open sample demo** on the landing page creates a new private household with its own link. The three ready-made language demos (`demo-telugu`, `demo-hindi`, `demo-english`) are shared by everyone: if you use them, press **Reset** first, and expect other reviewers to reset them too.
+
+## 2. Logins (test users)
+
+There are no accounts or passwords. A household is reached through an unguessable ID in its link, and that link is the login. Each household has two kinds of user:
+
+| User | How to "log in" | What they do |
+|---|---|---|
+| **Family member / caregiver** (son, daughter, nurse, paid caretaker) | Open `/?h=<id>` | Onboarding, prescription upload and review, pack photos, Call now, live call, alerts, call history |
+| **Patient** | Open `/?h=<id>&view=phone` (on their phone; installable to the Home Screen) | Receives the call, talks, sees captions and pack photos |
+
+Ready-made households (shared, so press Reset on the landing page first):
+
+| Language | Family dashboard | Patient's phone | Patient / greeting / main contact |
+|---|---|---|---|
+| Telugu | `/?h=demo-telugu` | `/?h=demo-telugu&view=phone` | Lakshmi / అమ్మ / Ravi |
+| Hindi | `/?h=demo-hindi` | `/?h=demo-hindi&view=phone` | Kamla / माँजी / Rohit |
+| English | `/?h=demo-english` | `/?h=demo-english&view=phone` | Lakshmi / Amma / Ravi |
+
+Each one has the sample prescription saved (9 doses: Metformin morning and night, Amlodipine, Atorvastatin at night, Thyroxine and Pantoprazole before breakfast, Amoxicillin morning and night for 5 days, Vitamin D3 on Sundays), pack photos and tablet counts. Adding `&presenter=1` to the family link shows **Advance to next reminder**, which rings the next time of day's medicines.
+
+## 3. End-to-end journeys
+
+### Journey A: a family sets up a new patient (family dashboard)
+1. Open `/` and choose **Start setup**.
+2. Onboarding: who is setting this up (family, a caretaker, or the patient), the patient's name, the call language, how On Time greets them ("అమ్మ", "माँजी", "Amma"…), and up to 6 family members or caretakers with one main contact. Save.
+3. **Medicines → Upload prescription photos or PDFs.** Use `/samples/prescription.jpg` (download it from `/samples/index.html`). Choose **Read prescription with AI**. It takes about 15–25 s: 5 readings run in parallel and are voted on.
+4. Review the plan. Each medicine shows its simple name ("Sugar tablet"), what it contains, dose, meal timing and days. A line the AI wasn't sure about gets an orange **"AI wasn't sure"** card with a Confirm button. **Save plan** stays blocked until every doubt is resolved, every required field is filled, and **"I checked every medicine against the prescription"** is ticked.
+5. **Medicine packs at home → Scan packs with AI.** Upload the `pack-*.jpg` files from `/samples/index.html`. Each pack is matched to its medicine by the printed label (never by the tablet's look), and the tablets still in the strip are counted. Expected counts: Metformin 7, Amlodipine 15, Atorvastatin 4, Thyroxine blank (a closed bottle can't be counted), Pantoprazole 8, Amoxicillin 10, Vitamin D3 3. Accept, then save.
+6. **Today** shows the day's doses and refill dates. **Share** gives the patient's phone link.
+
+### Journey B: the medicine-time call (patient's phone + family dashboard)
+1. Open the patient's phone link in one tab and the family dashboard in another, or use the stage view (`&view=stage`) to see both side by side.
+2. On the dashboard press **Call now**, or **Advance to next reminder** in presenter mode. You can also ring it with `POST /api/h/<id>/ring` and body `{"slot":"morning"}`. The phone rings.
+3. Answer. The agent greets the patient in their language, asks about the meal (when any medicine is taken after food), then asks about each medicine by its simple name.
+4. Things to try (spoken, or typed with the hook in section 5):
+   - "Yes, I took it" / "అవును, వేసుకున్నాను" / "हाँ, ले ली": the dose is saved, then one short acknowledgment, then the next medicine.
+   - A listening sound while the agent is talking ("సరే", "हाँ जी", "mm-hmm"): the agent lowers its voice for a moment and keeps going.
+   - **"Wait, which tablet?" / "ఆగండి, ఈ tablet?"**: the agent stops, the patient's own pack photo appears on the phone, and the agent asks whether the label in their hand matches.
+   - **"No, the name is different" / "లేదు, వేరే పేరు ఉంది"**: the agent tells them to set it aside, saves the dose as unconfirmed, and a **pack mix-up alert** appears on the family dashboard.
+   - "Not yet": the agent asks them to take it now and waits on the line for up to 2 minutes.
+   - A symptom ("I feel dizzy") or an emergency ("chest pain"): the family is alerted, and emergencies get "call 108". The agent never gives medical advice.
+5. After the call the dashboard shows the doses ticked, the transcript, the turn-taking decisions (what was heard, the decision, and the time to yield), alerts, and an English summary.
+
+### Journey C: automatic reminders and missed calls
+- An EventBridge rule runs the scheduler every minute. At each medicine time it rings the patient's phone, unless those doses are already reported taken.
+- A ring nobody answers for 3 minutes becomes a missed call. A follow-up rings later if the family allowed follow-ups.
+- **Call alerts on the phone:** on the patient's phone view, tap **Turn on call alerts**. On iPhone, first use Safari → Share → Add to Home Screen (iOS 16.4+).
+
+### Journey D: languages
+Open the Hindi or English demo (Reset first) and run Journey B: the whole call, captions and phone screen are in that language. For any of the 9 languages, pick it during onboarding.
+
+## 4. Running it from source
+
+### Prerequisites
+- **Node.js 22 or newer** (tested on 22 and 25). No `npm install`: the project has **no npm dependencies** and no build step for local runs.
+- An **OpenAI API key** with access to the Realtime API, for the AI features (see below).
+- Optional, for deploying: AWS SAM CLI and AWS credentials. Not needed to run or review.
+- No database to install: running locally stores data as JSON files in `.data/` (created automatically). The deployed version uses DynamoDB.
+
+### Environment variables (copy `.env.example` to `.env`)
+
+| Variable | Required | What it's for |
+|---|---|---|
+| `OPENAI_API_KEY` | For the AI features | Prescription reading, simple names, pack scanning, voice calls |
+| `PORT` | No (default `8091`) | Local server port |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | No | Web Push call alerts. Without them, everything works except alerts to a closed phone app. |
+| `REALTIME_MODEL`, `TRANSCRIBE_MODEL`, `VISION_MODEL`, `QUICK_MODEL`, `PACK_MODEL`, `REALTIME_VOICE`, `VISION_READS`, `VISION_EFFORT` | No | Override the default models (see the table in `README.md`) |
+| `SECRET_ARN`, `TABLE_NAME`, `PUSH_SUBJECT` | AWS only | Set by `template.yaml` on Lambda. Not used locally. |
+
+**Without a key:** the server, landing page, demo households, onboarding, typing medicines by hand, schedules, dashboard and tests all work. Prescription reading, pack scanning, simple-name suggestions and voice calls need a key. To try those without one, use the live site above, which has every key configured.
+
+### Commands
+
+```sh
+cd on-time-agent
+cp .env.example .env              # then put your OpenAI key in .env (optional, see above)
+node --test test/*.test.mjs       # 91 tests, no network or key needed
+node server.mjs                   # http://localhost:8091  (PORT=9000 node server.mjs to change)
+```
+
+- There is **one process**. `server.mjs` serves the front end (`dist/`, plain ES modules, no bundler) and the API (`/api/...`), and runs the every-minute scheduler. There is no separate worker or front-end server.
+- **No seeding needed.** Click **Start setup** or **Open sample demo** on `http://localhost:8091/`, or open a language demo, which creates `demo-telugu`, `demo-hindi` or `demo-english` with the sample plan and pack photos on first use. From the command line: `curl -X POST localhost:8091/api/demo/telugu -H 'content-type: application/json' -d '{"reset":true}'`.
+- Voice calls need a browser with microphone access (Chrome, Edge or Safari) on `localhost` or HTTPS. Share links show the page's own address, so a phone can't open a `localhost` link: for testing on a real phone, use the live site.
+- Deploying (not needed to review): `./scripts/deploy.sh`, with AWS credentials and the SAM CLI. Stack: API Gateway HTTP API + one Node 22 Lambda + DynamoDB + EventBridge (every minute) + Secrets Manager. See `template.yaml`.
+
+## 5. Testing a call without a microphone (for automated reviewers)
+
+Add `&debug=1` to the patient's phone link. Then, in the browser console:
+
+```js
+// 1. Before answering: give the call a silent "microphone" (no permission prompt)
+const ctx = new AudioContext(); const dest = ctx.createMediaStreamDestination();
+navigator.mediaDevices.getUserMedia = async () => dest.stream; await ctx.resume();
+// 2. Ring it (dashboard Call now, or POST /api/h/<id>/ring {"slot":"morning"}), then answer:
+document.querySelector('button[aria-label=Answer]').click();
+// 3. Watch the agent, and reply as the patient by typing:
+onTimeDebug.state();                       // { screen, caption, agentSpeaking, turns }
+onTimeDebug.say('Yes, I had breakfast');   // wait until agentSpeaking is false and the caption ends with "?"
+onTimeDebug.say('Yes, I took it');
+onTimeDebug.say('Wait, which tablet?');    // the pack photo appears on the phone
+onTimeDebug.say('No, the name on my strip is different');  // pack mix-up alert on the dashboard
+```
+
+Afterwards, `GET /api/h/<id>` returns the household as JSON: `calls.at(-1).transcript`, `todayDoses` and `alerts`. `scripts/live-call-test.js` runs a whole call automatically, playing recorded answers from `/samples/voice/` (paste it into the console of `/?h=demo-<telugu|hindi|english>&view=phone&debug=1` while the phone rings).
+
+## 6. What is simulated, mocked or unfinished
+
+- **No real login.** A household is reached through an unguessable link. A real launch would add phone-number login with an OTP.
+- **The "phone call" is a web app, not a telephone call.** The patient's phone view rings through Web Push plus an in-app ringing screen, and the voice runs over WebRTC to OpenAI Realtime. On iPhone the alert is an ordinary notification (the silent switch mutes it), not a full-screen ring. Real telephony (a phone number that rings) is not built.
+- **Sample data only.** The prescription and pack photos in `/samples/` are made up ("On Time Demo Clinic", "Demo Pharma"). The voice clips in `/samples/voice/` are synthetic.
+- **Alerts reach the family dashboard only.** There is no SMS, WhatsApp or email.
+- **API Gateway's 30-second limit:** prescription reading stops waiting at 26 s. Very messy handwriting gets many lines flagged for review, which is by design.
+- **Daily caps** on the live site (households 300, calls 250, prescription reads 400 per day) protect the OpenAI budget.
+- **Known small issue:** in Hindi, a reply that the speech-to-text splits in two can make the agent repeat the first medicine question once, and the short "अच्छा." acknowledgment is sometimes skipped. Telugu and English calls were tested end to end on 22 Nov 2026 (all 6 morning doses saved, the pack check and the caretaker alert work).
+
+## 7. Where things are
+
+`README.md` covers the product, model choices and measured results. The engineering notes below cover architecture, decisions and the code map.
+
+| Path | What it does |
+|---|---|
+| `server.mjs` | Local server: static front end + API + scheduler |
+| `aws.mjs`, `template.yaml` | Lambda entry point and AWS stack |
+| `lib/api.mjs` | HTTP API routes and demo households |
+| `lib/agent.mjs` | Per-call voice agent instructions and tools, in the patient's language |
+| `lib/openai.mjs` | Prescription reading (5 readings + vote), pack scanning, Realtime secrets |
+| `lib/medicines.mjs`, `lib/data/` | 240,000 Indian medicines used to check readings |
+| `lib/household.mjs`, `lib/store.mjs`, `lib/scheduler.mjs`, `lib/push.mjs` | Domain model, storage, every-minute scheduler, Web Push |
+| `dist/` | Front end: `app.mjs` (landing), `family.mjs` (dashboard), `phone.mjs` (call screen), `realtime.mjs` (voice call), `turns.mjs` (Avunu ≠ Aagandi), `languages.mjs` (9 languages) |
+| `test/` | 91 unit tests (`node --test test/*.test.mjs`) |
+
+---
+
+# Engineering notes (for coding agents working on the code)
 
 Read this first, then `README.md` (product, models, journey). This file covers how the code is built, deployed and tested, what was decided and why, and what is left.
 
