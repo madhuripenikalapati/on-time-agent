@@ -19,6 +19,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
   let data = null;
   let screen = 'locked';
   let microphone = null;
+  let teluguConfirmationBuffer;
   let callMicTrack = null;
   const showMicState = () => {
     const unavailable = callMicTrack && (callMicTrack.muted || callMicTrack.readyState !== 'live' || audioContext?.state !== 'running');
@@ -395,7 +396,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       call = started.call;
       data = started.household;
       const lang = languageOf(data.patient?.language);
-      const farewell = { language: lang.name, confirmation: lang.phrases.yes, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
+      const farewell = { language: lang.name, confirmation: lang.phrases.yes, recordedConfirmation: data.patient?.language === 'te', done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
       const doseQuestions = started.medicines.map(m => ({
         medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name: m.nickname || m.name }),
       }));
@@ -468,10 +469,39 @@ export function mountPhone(root, id, { stage = false } = {}) {
     return result.result?.[0] ?? { ok: true };
   }
 
+  async function playTeluguConfirmation() {
+    const activeCall = call;
+    try {
+      teluguConfirmationBuffer ??= await (async () => {
+        const response = await fetch('/confirm-te.wav');
+        if (!response.ok) throw new Error('Confirmation audio unavailable.');
+        return audioContext.decodeAudioData(await response.arrayBuffer());
+      })();
+      if (call !== activeCall || screen !== 'call' || audioContext.state !== 'running') return;
+      const source = audioContext.createBufferSource();
+      source.buffer = teluguConfirmationBuffer;
+      source.connect(audioContext.destination);
+      const ended = new Promise(resolve => { source.onended = resolve; });
+      source.start();
+      enqueue({ type: 'transcript', who: 'agent', text: languageOf('te').phrases.yes });
+      let timeout;
+      await Promise.race([ended, new Promise(resolve => {
+        timeout = setTimeout(resolve, teluguConfirmationBuffer.duration * 1000 + 500);
+      })]);
+      clearTimeout(timeout);
+      source.disconnect();
+    } catch (error) {
+      console.warn('Could not play the Telugu confirmation:', error.message);
+    }
+  }
+
   async function onTool(name, args) {
     switch (name) {
-      case 'record_dose':
-        return send({ type: 'dose', medicineId: args.medicine_id, status: args.status, note: args.note ?? '' });
+      case 'record_dose': {
+        const result = await send({ type: 'dose', medicineId: args.medicine_id, status: args.status, note: args.note ?? '' });
+        if (result.ok && result.recorded === 'taken' && data.patient?.language === 'te') await playTeluguConfirmation();
+        return result;
+      }
       case 'show_pack': {
         const medicine = data.medicines.find(m => m.id === args.medicine_id);
         if (!medicine) return { ok: false, error: 'Unknown medicine' };

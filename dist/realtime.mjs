@@ -191,8 +191,9 @@ export class VoiceCall {
         instructions: 'Classify the latest patient reply to the saved pack-label question by meaning in context. A clear label match is matches; a different or unreadable label is different; an ambiguous answer is unclear; an unrelated request or symptom is other. Call the tool only.',
       });
     } else if (this.doseAnswer && this.structuredDoseQuestions) {
-      const confirmation = this.farewell?.confirmation
-        ? ' When acknowledging a clear confirmation, speak in ' + this.farewell.language
+      const confirmation = this.farewell?.recordedConfirmation
+        ? ' For a clear taken reply, call record_dose silently. Do not speak an acknowledgment before or after recording; the app plays the Telugu acknowledgment.'
+        : this.farewell?.confirmation ? ' When acknowledging a clear confirmation, speak in ' + this.farewell.language
           + ' and use exactly ' + JSON.stringify(this.farewell.confirmation)
           + '. Do not translate it or add an acknowledgment in another language.'
         : '';

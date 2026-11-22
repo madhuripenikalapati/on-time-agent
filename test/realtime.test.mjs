@@ -435,3 +435,15 @@ test('the opening greeting plays before the agent can ask a dose question', () =
   assert.equal(sent.at(-1).response, undefined);
   call.hangUp();
 });
+
+test('Telugu confirmation is left to the app’s recorded clip', () => {
+  const { call, sent } = harness();
+  call.structuredDoseQuestions = true;
+  call.farewell = { language: 'Telugu', confirmation: 'మంచిది అండి.', recordedConfirmation: true };
+  call.doseAnswer = { medicineId: 'a' };
+  call.callerTurn();
+  assert.match(sent.at(-1).response.instructions, /call record_dose silently/);
+  assert.match(sent.at(-1).response.instructions, /the app plays the Telugu acknowledgment/);
+  assert.equal(call.doseAnswer.medicineId, 'a');
+  call.hangUp();
+});
