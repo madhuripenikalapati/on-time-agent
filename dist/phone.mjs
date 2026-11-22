@@ -383,15 +383,10 @@ export function mountPhone(root, id, { stage = false } = {}) {
       data = started.household;
       const lang = languageOf(data.patient?.language);
       const farewell = { language: lang.name, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
-      const uncertainDialogue = data.patient?.language === 'te' ? {
-        clarify: 'క్షమించండి అండి, ఒక్కసారి చెప్తారా?',
-        taken: 'సరే అండి, వేసుకున్నట్టు నమోదు చేశాను.',
-        unconfirmed: 'సరే అండి. ఈ మందు వేసుకున్నారో లేదో తెలియలేదు. తీసుకున్నట్టు నమోదు చేయలేదు.',
-      } : null;
       const doseQuestions = started.medicines.map(m => ({
         medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name: m.nickname || m.name }),
       }));
-      voice = new VoiceCall({ secret: started.secret.value, microphone, audioContext, mode, onTool, onUpdate, farewell, uncertainDialogue, doseQuestions, structuredDoseQuestions: true });
+      voice = new VoiceCall({ secret: started.secret.value, microphone, audioContext, mode, onTool, onUpdate, farewell, doseQuestions, structuredDoseQuestions: true });
       await voice.connect();
       startedAt = Date.now();
       screen = 'call';

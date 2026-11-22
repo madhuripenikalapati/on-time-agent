@@ -85,7 +85,6 @@ test('silence after a closing statement wraps the call up after 7 seconds', () =
     mock.timers.tick(200);
     const close = sent.find(e => e.type === 'response.create');
     assert.deepEqual(close.response.tool_choice, { type: 'function', name: 'end_call' });
-    assert.deepEqual(close.response.output_modalities, ['text']);
   } finally {
     mock.timers.reset();
   }
@@ -405,50 +404,5 @@ test('a spoken pack match opens a fresh question and the first clear reply recor
     tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'duplicate'),
   ], true, true);
   assert.deepEqual(tools.filter(entry => entry.name === 'record_dose').map(entry => entry.args.medicine_id), ['a']);
-  call.hangUp();
-});
-
-test('two uncertain Telugu replies ask once, save only Unconfirmed, and play a Telugu closing', async () => {
-  const { call, tools, sent } = harness();
-  call.structuredDoseQuestions = true;
-  call.doseQuestions = [{ medicineId: 'a', text: 'BP tablet వేసుకున్నారా అండి?' }];
-  call.uncertainDialogue = { clarify: 'క్షమించండి అండి, ఒక్కసారి చెప్తారా?', unconfirmed: 'తీసుకున్నట్టు నమోదు చేయలేదు.' };
-  call.farewell = { language: 'Telugu', done: 'జాగ్రత్తగా ఉండండి.' };
-  call.doseAnswer = call.doseQuestions[0];
-  call.callerTurn();
-  assert.deepEqual(sent.at(-1).response.output_modalities, ['text']);
-  assert.equal(sent.at(-1).response.tool_choice.name, 'interpret_dose_reply');
-  call.handle({ type: 'response.done' });
-  await call.runTools([tool('interpret_dose_reply', { result: 'unsure' })], false);
-  assert.match(sent.at(-1).response.instructions, /ఒక్కసారి చెప్తారా/);
-  assert.equal(tools.length, 0);
-  call.handle({ type: 'response.created', response: { id: 'clarification' } });
-  call.handle({ type: 'output_audio_buffer.started', response_id: 'clarification' });
-  call.handle({ type: 'response.done', response: { id: 'clarification', status: 'completed' } });
-  call.handle({ type: 'output_audio_buffer.stopped', response_id: 'clarification' });
-  call.speechStarted();
-  call.utterances.set('fresh-unsure', call.current);
-  call.current = null;
-  call.decide('fresh-unsure', 'గుర్తు లేదు.');
-  call.handle({ type: 'response.done' });
-  await call.runTools([tool('interpret_dose_reply', { result: 'unsure' })], false);
-  assert.deepEqual(tools.map(t => t.name), ['record_dose', 'end_call']);
-  assert.equal(tools[0].args.status, 'unsure');
-  assert.equal(sent.at(-1).response.tool_choice, 'none');
-  assert.match(sent.at(-1).response.instructions, /తీసుకున్నట్టు నమోదు చేయలేదు.*జాగ్రత్తగా ఉండండి/);
-  call.hangUp();
-});
-
-test('a clear Telugu confirmation saves before a localized acknowledgment and goodbye', async () => {
-  const { call, tools, sent } = harness();
-  call.doseQuestions = [{ medicineId: 'a', text: 'BP tablet వేసుకున్నారా అండి?' }];
-  call.uncertainDialogue = { taken: 'వేసుకున్నట్టు నమోదు చేశాను.' };
-  call.farewell = { language: 'Telugu', done: 'జాగ్రత్తగా ఉండండి.' };
-  call.doseAnswer = call.doseQuestions[0];
-  await call.runTools([tool('interpret_dose_reply', { result: 'taken' })], false);
-  assert.deepEqual(tools.map(t => t.name), ['record_dose', 'end_call']);
-  assert.equal(tools[0].args.status, 'taken');
-  assert.equal(sent.at(-1).response.tool_choice, 'none');
-  assert.match(sent.at(-1).response.instructions, /వేసుకున్నట్టు నమోదు చేశాను.*జాగ్రత్తగా ఉండండి/);
   call.hangUp();
 });

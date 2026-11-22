@@ -96,13 +96,10 @@ export class VoiceCall {
    * @param {(name: string, args: object) => Promise<object>} options.onTool
    * @param {(event: object) => void} options.onUpdate UI updates
    */
-  constructor({ secret, microphone, audioContext, mode = 'ontime', onTool, onUpdate, farewell, uncertainDialogue, doseQuestions = [], structuredDoseQuestions = false }) {
+  constructor({ secret, microphone, audioContext, mode = 'ontime', onTool, onUpdate, farewell, doseQuestions = [], structuredDoseQuestions = false }) {
     // farewell: the two goodbye lines in the patient's language, for the safety-net goodbye.
     Object.assign(this, { secret, microphone, audioContext, mode, onTool, onUpdate, farewell });
     this.doseQuestions = doseQuestions;
-    this.uncertainDialogue = uncertainDialogue;
-    this.clarifiedDoses = new Set();
-    this.resolvedDoses = new Set();
     this.structuredDoseQuestions = structuredDoseQuestions;
     this.audio = new Audio();
     this.audio.autoplay = true;
@@ -169,13 +166,6 @@ export class VoiceCall {
     this.wantResponse = false;
     this.pendingDoseQuestion = doseQuestion;
     this.responseActive = true;
-    if (response?.instructions && this.farewell?.language) {
-      response = {
-        ...response,
-        instructions: 'Speak only in ' + this.farewell.language + '. Never assume a dose was taken and never speak the caregiver summary. '
-          + response.instructions,
-      };
-    }
     this.send({ type: 'response.create', ...(response ? { response } : {}) });
   }
 
@@ -190,32 +180,22 @@ export class VoiceCall {
         tool_choice: { type: 'function', name: 'interpret_pack_reply' },
         instructions: 'Classify the latest patient reply to the saved pack-label question by meaning in context. A clear label match is matches; a different or unreadable label is different; an ambiguous answer is unclear; an unrelated request or symptom is other. Call the tool only.',
       });
-    } else if (this.doseAnswer && this.uncertainDialogue) {
-      this.requestResponse({
-        output_modalities: ['text'],
-        tool_choice: { type: 'function', name: 'interpret_dose_reply' },
-        instructions: 'Silently classify only the latest fresh reply to the dose question. Return taken only for a clear report they already took this exact dose. Return unsure if they do not remember or their meaning is ambiguous. Return other for a clear negative, future intent, question, symptom, or mixed request. Never infer taken from uncertainty or politeness. Understand dialects and mixed languages by meaning. Call the tool only.',
-      });
     } else if (this.doseAnswer && this.structuredDoseQuestions) {
-      this.respondToDoseAnswer();
+      this.requestResponse({
+        instructions: 'Interpret the latest fresh reply to the dose question for medicine ID ' + JSON.stringify(this.doseAnswer.medicineId)
+          + '. If they clearly report they already took this dose, call record_dose for that ID with status taken now. Do not ask them to repeat a clear confirmation. For future intent, negation, or unclear meaning, follow the existing confirmation instructions.',
+      });
     } else {
       this.requestResponse();
     }
   }
 
-  respondToDoseAnswer() {
-    this.requestResponse({
-      instructions: 'Interpret the latest fresh reply to the dose question for medicine ID ' + JSON.stringify(this.doseAnswer.medicineId)
-        + '. If they clearly report they already took this dose, call record_dose for that ID with status taken now. Do not ask them to repeat a clear confirmation. For future intent or negation, follow the existing confirmation instructions. Never assume.',
-    });
-  }
-
-  askDoseQuestion(question, lead = '') {
+  askDoseQuestion(question) {
     this.doseAnswer = null;
     this.openDoseQuestion = null;
     this.requestResponse({
       tool_choice: 'none',
-      instructions: 'Speak only this dose question in the language of the call, then wait: ' + JSON.stringify((lead ? lead + ' ' : '') + question.text),
+      instructions: 'Speak only this dose question in the language of the call, then wait: ' + JSON.stringify(question.text),
     }, question);
   }
 
@@ -320,10 +300,6 @@ export class VoiceCall {
         const askedJustNow = /[?？]\s*$/u.test(said);
         if (askedJustNow && !this.structuredDoseQuestions) this.doseAnswer = null;
         if (calls.length) this.runTools(calls, this.spokeSinceCaller, askedJustNow);
-        else if (this.continueAfterDoseNotice) {
-          this.continueAfterDoseNotice = false;
-          this.requestResponse({ instructions: 'Continue with ask_dose for the next unresolved medicine. The previous dose result is already saved; do not ask about it again.' });
-        }
         else if (this.wantResponse) {
           const { response, doseQuestion } = this.wantResponse;
           this.requestResponse(response, doseQuestion);
@@ -444,43 +420,13 @@ export class VoiceCall {
   async runTools(calls, spoke, askedJustNow = false) {
     let blocked = false;
     let askDose = null;
-    let clarifyDose = false;
-    let doseNotice = null;
-    let interpretOther = false;
     for (const call of calls) {
       let args = {};
       try { args = JSON.parse(call.arguments || '{}'); } catch {}
       let output;
       try {
         // Guard: never record a dose the patient hasn't answered about yet.
-        if (call.name === 'interpret_dose_reply') {
-          const dose = this.doseAnswer;
-          if (!this.uncertainDialogue || !dose) {
-            output = { ok: false, error: 'No fresh dose answer is available.' };
-          } else if (args.result === 'taken') {
-            this.doseAnswer = null;
-            output = await this.onTool('record_dose', { medicine_id: dose.medicineId, status: 'taken', note: 'Patient clearly reported taking this dose.' });
-            if (output?.ok) {
-              this.resolvedDoses.add(dose.medicineId);
-              doseNotice = 'taken';
-            }
-          } else if (args.result !== 'unsure') {
-            interpretOther = true;
-            output = { ok: true, note: 'The app will respond to this reply.' };
-          } else if (!this.clarifiedDoses.has(dose.medicineId)) {
-            this.clarifiedDoses.add(dose.medicineId);
-            askDose = dose;
-            clarifyDose = true;
-            output = { ok: true, note: 'The app will ask for one clarification.' };
-          } else {
-            this.doseAnswer = null;
-            output = await this.onTool('record_dose', { medicine_id: dose.medicineId, status: 'unsure', note: 'Patient remained unsure after clarification.' });
-            if (output?.ok) {
-              this.resolvedDoses.add(dose.medicineId);
-              doseNotice = 'unconfirmed';
-            }
-          }
-        } else if (call.name === 'interpret_pack_reply') {
+        if (call.name === 'interpret_pack_reply') {
           const pack = this.packCheck;
           if (!pack) {
             output = { ok: false, error: 'No pack check is active.' };
@@ -517,7 +463,6 @@ export class VoiceCall {
         } else {
           if (call.name === 'record_dose') this.doseAnswer = null;
           output = await this.onTool(call.name, args);
-          if (call.name === 'record_dose' && output?.ok) this.resolvedDoses.add(args.medicine_id);
           if (call.name === 'show_pack' && output?.ok && this.structuredDoseQuestions) {
             this.packCheck = this.doseQuestions.find(question => question.medicineId === args.medicine_id) ?? null;
             this.doseAnswer = null;
@@ -535,23 +480,7 @@ export class VoiceCall {
     const onlyWaiting = calls.every(call => call.name === 'wait_for_patient');
     if (!this.ending) {
       if (askDose) {
-        this.askDoseQuestion(askDose, clarifyDose ? this.uncertainDialogue.clarify : '');
-      } else if (doseNotice) {
-        const finalDose = this.doseQuestions.every(question => this.resolvedDoses.has(question.medicineId));
-        if (finalDose) {
-          await this.onTool('end_call', { summary: doseNotice === 'unconfirmed'
-            ? 'The patient was still unsure after a clarification. The dose was saved as unconfirmed.'
-            : 'The patient reported taking the last checked dose. See the recorded outcomes for the full call.' });
-        }
-        this.continueAfterDoseNotice = !finalDose;
-        const line = this.uncertainDialogue[doseNotice] + (finalDose && this.farewell?.done ? ' ' + this.farewell.done : '');
-        this.requestResponse({ tool_choice: 'none', instructions: 'Say exactly this and nothing else: ' + JSON.stringify(line) });
-        if (finalDose) {
-          this.ending = true;
-          setTimeout(() => this.hangUp('ended'), 15000);
-        }
-      } else if (interpretOther && this.doseAnswer) {
-        this.respondToDoseAnswer();
+        this.askDoseQuestion(askDose);
       } else if (!blocked && !(onlyWaiting && spoke)) {
         this.requestResponse();
       }
@@ -607,11 +536,10 @@ export class VoiceCall {
       }
       this.responseActive = true;
       this.send({ type: 'response.create', response: {
-        output_modalities: ['text'],
         tool_choice: { type: 'function', name: 'end_call' },
         instructions: question || this.questionRetried
-          ? 'The patient did not answer. Call end_call silently with an English dashboard summary that says what is still unconfirmed. Never assume a dose was taken.'
-          : 'The conversation is over. Call end_call silently with the English dashboard summary. Do not say anything more.',
+          ? 'The patient did not answer. Call end_call now with an English summary that says what is still unconfirmed.'
+          : 'The conversation is over. Call end_call now with the English summary. Do not say anything more.',
       } });
     }, retry ? QUESTION_RETRY_MS : question || this.questionRetried ? RETRIED_QUESTION_TIMEOUT_MS : 7000);
   }
