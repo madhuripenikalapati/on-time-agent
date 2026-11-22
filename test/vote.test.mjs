@@ -100,3 +100,10 @@ test('a reading with no close real medicine is compared by spelling, so it still
   const out = voteReadings([read(row('Ketosteril', null, 'lunch', 'Kidney tablet')), read(row('Ketosteril', null, 'lunch', 'Kidney tablet')), read(row('Ketoguard DS', null, 'lunch', null))]);
   assert.ok(out.medicines[0].doubt);
 });
+
+test('a line no reading could name is always flagged', () => {
+  const out = voteReadings([read(row(null, '20 mg', 'breakfast', null)), read(row(null, '20 mg', 'breakfast', null)), read(row('Arkamin', '20 mg', 'breakfast', null))]);
+  assert.ok(out.medicines[0].doubt);
+  const none = voteReadings([read(row(null, '20 mg', 'breakfast', null)), read(row(null, '20 mg', 'breakfast', null))]);
+  assert.ok(none.medicines[0].doubt);
+});
