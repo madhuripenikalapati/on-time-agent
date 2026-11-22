@@ -615,6 +615,19 @@ export class VoiceCall {
     clearTimeout(this.idleTimer);
   }
 
+  // Test hook only (?debug=1): a typed caller reply, bound to the open dose question exactly
+  // as a spoken reply is in decide(), so typed "yes, I took it" saves the dose too.
+  typedReply(text) {
+    const question = this.openDoseQuestion;
+    const interrupt = classifyTurn(text, { agentSpeaking: true }).reason;
+    if (this.structuredDoseQuestions && question && !this.agentSpeaking && text.trim()
+      && !/[?？]/u.test(text) && !['stop word', 'question'].includes(interrupt)) {
+      this.doseAnswer = question;
+      this.openDoseQuestion = null;
+    }
+    this.tell(text);
+  }
+
   tell(text) {
     this.clearIdle();
     if (this.agentSpeaking) this.yieldFloor();

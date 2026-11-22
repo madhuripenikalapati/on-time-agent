@@ -565,7 +565,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
   // Test hook: ?debug=1 lets a tester type a caller reply instead of speaking it.
   if (new URLSearchParams(location.search).get('debug') === '1') {
     window.onTimeDebug = {
-      say: text => { heard = text; enqueue({ type: 'transcript', who: 'patient', text }); voice?.tell(text); },
+      say: text => { heard = text; enqueue({ type: 'transcript', who: 'patient', text }); voice?.typedReply(text); },
       state: () => ({ screen, caption, agentSpeaking: voice?.agentSpeaking, turns }),
     };
   }
