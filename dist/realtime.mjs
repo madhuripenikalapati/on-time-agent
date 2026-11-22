@@ -181,9 +181,15 @@ export class VoiceCall {
         instructions: 'Classify the latest patient reply to the saved pack-label question by meaning in context. A clear label match is matches; a different or unreadable label is different; an ambiguous answer is unclear; an unrelated request or symptom is other. Call the tool only.',
       });
     } else if (this.doseAnswer && this.structuredDoseQuestions) {
+      const confirmation = this.farewell?.confirmation
+        ? ' When acknowledging a clear confirmation, speak in ' + this.farewell.language
+          + ' and use exactly ' + JSON.stringify(this.farewell.confirmation)
+          + '. Do not translate it or add an acknowledgment in another language.'
+        : '';
       this.requestResponse({
         instructions: 'Interpret the latest fresh reply to the dose question for medicine ID ' + JSON.stringify(this.doseAnswer.medicineId)
-          + '. If they clearly report they already took this dose, call record_dose for that ID with status taken now. Do not ask them to repeat a clear confirmation. For future intent, negation, or unclear meaning, follow the existing confirmation instructions.',
+          + '. If they clearly report they already took this dose, call record_dose for that ID with status taken now. Do not ask them to repeat a clear confirmation. For future intent, negation, or unclear meaning, follow the existing confirmation instructions.'
+          + confirmation,
       });
     } else {
       this.requestResponse();

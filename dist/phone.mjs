@@ -382,7 +382,7 @@ export function mountPhone(root, id, { stage = false } = {}) {
       call = started.call;
       data = started.household;
       const lang = languageOf(data.patient?.language);
-      const farewell = { language: lang.name, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
+      const farewell = { language: lang.name, confirmation: lang.phrases.yes, done: lang.phrases.goodbye, callback: fill(lang.phrases.goodbyeCallback, { minutes: '<N>' }) };
       const doseQuestions = started.medicines.map(m => ({
         medicineId: m.id, text: fill(lang.phrases.doseQuestion, { name: m.nickname || m.name }),
       }));

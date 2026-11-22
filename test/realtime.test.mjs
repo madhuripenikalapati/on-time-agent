@@ -406,3 +406,15 @@ test('a spoken pack match opens a fresh question and the first clear reply recor
   assert.deepEqual(tools.filter(entry => entry.name === 'record_dose').map(entry => entry.args.medicine_id), ['a']);
   call.hangUp();
 });
+
+test('the fresh dose response requests only the selected language acknowledgment', () => {
+  const { call, sent } = harness();
+  call.structuredDoseQuestions = true;
+  call.farewell = { language: 'Telugu', confirmation: 'మంచిది అండి.' };
+  call.doseAnswer = { medicineId: 'a' };
+  call.callerTurn();
+  assert.match(sent.at(-1).response.instructions, /speak in Telugu and use exactly "మంచిది అండి\."/);
+  assert.match(sent.at(-1).response.instructions, /call record_dose for that ID/);
+  assert.equal(call.doseAnswer.medicineId, 'a');
+  call.hangUp();
+});
