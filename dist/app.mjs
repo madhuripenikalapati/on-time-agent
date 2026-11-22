@@ -61,6 +61,22 @@ function landing() {
       button.textContent = label;
     }
   };
+  // Reset starts the demo family fresh (doses, calls, alerts) but keeps its links and phone alerts.
+  const openDemo = async (event, key, reset, suffix) => {
+    const button = event.currentTarget;
+    if (reset && !confirm('Reset the ' + key + ' demo? Today\'s doses, calls and alerts are cleared. Links and phone alerts stay.')) return;
+    button.disabled = true;
+    try {
+      const response = await fetch('/api/demo/' + key, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reset }) });
+      const household = await response.json();
+      if (!response.ok) throw new Error(household.error || 'Could not open the demo.');
+      if (reset) { toast('The ' + key + ' demo is fresh again.'); button.disabled = false; return; }
+      location.href = '?h=' + household.id + suffix;
+    } catch (error) {
+      toast(error.message, 'bad');
+      button.disabled = false;
+    }
+  };
   const previous = /^[A-Za-z0-9_-]{8,24}$/.test(remembered ?? '');
   app.append(h('main', { class: 'landing' }, h('div', { class: 'landing-inner' },
     h('a', { class: 'logo', href: './' }, h('span', { class: 'logo-mark' }, icon('logo')), 'On Time'),
@@ -79,6 +95,14 @@ function landing() {
         h('div', { class: 'row' },
           h('button', { class: 'btn', onclick: event => start(event, 'sample') }, 'Open sample demo'),
           h('button', { class: 'btn', onclick: event => start(event, 'presenter') }, 'Start presenter demo')))),
+    // Fixed demo families, one language each, with the sample prescription already saved.
+    h('section', { class: 'landing-option demo-langs' },
+      h('h2', {}, 'Language demos'),
+      h('p', {}, 'Ready-made families with the sample prescription and pack photos. Each one calls in its own language only.'),
+      ...[['telugu', 'Telugu demo · తెలుగు'], ['hindi', 'Hindi demo · हिन्दी'], ['english', 'English demo']].map(([key, label]) => h('div', { class: 'row demo-lang' },
+        h('button', { class: 'btn primary', onclick: event => openDemo(event, key, false, '') }, label),
+        h('button', { class: 'btn small', onclick: event => openDemo(event, key, false, '&view=stage') }, 'Stage view'),
+        h('button', { class: 'btn small ghost', onclick: event => openDemo(event, key, true, '') }, 'Reset')))),
     h('p', { class: 'footnote' }, 'Hackathon prototype. Use sample prescriptions.'),
   )));
 }

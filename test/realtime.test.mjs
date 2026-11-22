@@ -407,15 +407,29 @@ test('a spoken pack match opens a fresh question and the first clear reply recor
   call.hangUp();
 });
 
-test('the fresh dose response requests only the selected language acknowledgment', () => {
+test('the reply to a dose question may only act: nothing is said before the dose is saved', () => {
   const { call, sent } = harness();
   call.structuredDoseQuestions = true;
-  call.farewell = { language: 'Telugu', confirmation: 'మంచిది అండి.' };
+  call.farewell = { language: 'Hindi', confirmation: 'अच्छा.' };
   call.doseAnswer = { medicineId: 'a' };
   call.callerTurn();
-  assert.match(sent.at(-1).response.instructions, /speak in Telugu and use exactly "మంచిది అండి\."/);
-  assert.match(sent.at(-1).response.instructions, /call record_dose for that ID/);
+  assert.equal(sent.at(-1).response.tool_choice, 'required', 'a tool call only, no speech');
+  assert.match(sent.at(-1).response.instructions, /record_dose for that ID with status taken/);
+  assert.match(sent.at(-1).response.instructions, /Do not speak in this step/);
   assert.equal(call.doseAnswer.medicineId, 'a');
+  call.hangUp();
+});
+
+test('after a saved "taken", only the short yes line is said (Hindi, English)', async () => {
+  const { call, sent } = harness();
+  call.structuredDoseQuestions = true;
+  call.farewell = { language: 'Hindi', confirmation: 'अच्छा.' };
+  call.doseAnswer = { medicineId: 'a' };
+  call.onTool = async () => ({ ok: true, recorded: 'taken' });
+  call.handle({ type: 'response.done', response: { output: [tool('record_dose', { medicine_id: 'a', status: 'taken' })] } });
+  await settle();
+  const output = JSON.parse(sent.find(e => e.type === 'conversation.item.create').item.output);
+  assert.match(output.note, /Say exactly "अच्छा\." and no other thanks/);
   call.hangUp();
 });
 
@@ -436,14 +450,19 @@ test('the opening greeting plays before the agent can ask a dose question', () =
   call.hangUp();
 });
 
-test('Telugu confirmation is left to the app’s recorded clip', () => {
+test('Telugu: after a saved "taken", the app plays మంచిది అండి and the agent adds nothing', async () => {
   const { call, sent } = harness();
   call.structuredDoseQuestions = true;
   call.farewell = { language: 'Telugu', confirmation: 'మంచిది అండి.', recordedConfirmation: true };
   call.doseAnswer = { medicineId: 'a' };
   call.callerTurn();
-  assert.match(sent.at(-1).response.instructions, /call record_dose silently/);
-  assert.match(sent.at(-1).response.instructions, /the app plays the Telugu acknowledgment/);
-  assert.equal(call.doseAnswer.medicineId, 'a');
+  assert.equal(sent.at(-1).response.tool_choice, 'required');
+  sent.length = 0;
+  call.responseActive = false;
+  call.onTool = async () => ({ ok: true, recorded: 'taken' });
+  call.handle({ type: 'response.done', response: { output: [tool('record_dose', { medicine_id: 'a', status: 'taken' })] } });
+  await settle();
+  const output = JSON.parse(sent.find(e => e.type === 'conversation.item.create').item.output);
+  assert.match(output.note, /already played the acknowledgment. Do not thank or acknowledge again/);
   call.hangUp();
 });

@@ -191,16 +191,15 @@ export class VoiceCall {
         instructions: 'Classify the latest patient reply to the saved pack-label question by meaning in context. A clear label match is matches; a different or unreadable label is different; an ambiguous answer is unclear; an unrelated request or symptom is other. Call the tool only.',
       });
     } else if (this.doseAnswer && this.structuredDoseQuestions) {
-      const confirmation = this.farewell?.recordedConfirmation
-        ? ' For a clear taken reply, call record_dose silently. Do not speak an acknowledgment before or after recording; the app plays the Telugu acknowledgment.'
-        : this.farewell?.confirmation ? ' When acknowledging a clear confirmation, speak in ' + this.farewell.language
-          + ' and use exactly ' + JSON.stringify(this.farewell.confirmation)
-          + '. Do not translate it or add an acknowledgment in another language.'
-        : '';
+      // Act first, speak after: this step may only call a tool, so nothing like "thanks for
+      // confirming" is said before the dose is saved. The acknowledgment comes after the save.
       this.requestResponse({
+        tool_choice: 'required',
         instructions: 'Interpret the latest fresh reply to the dose question for medicine ID ' + JSON.stringify(this.doseAnswer.medicineId)
-          + '. If they clearly report they already took this dose, call record_dose for that ID with status taken now. Do not ask them to repeat a clear confirmation. For future intent, negation, or unclear meaning, follow the existing confirmation instructions.'
-          + confirmation,
+          + ' by meaning, and call exactly one tool. Do not speak in this step.'
+          + ' Clearly already took it: record_dose for that ID with status taken. Not yet: wait_for_patient. Cannot take it, or tablets ran out: record_dose not_taken.'
+          + ' Unclear or mixed: ask_dose for that ID once more. A new symptom: flag_for_family. Which tablet / this tablet: show_pack.'
+          + ' Anything else that needs a spoken answer (a question, a request to repeat): reply_out_loud.',
       });
     } else {
       this.requestResponse();
@@ -479,6 +478,8 @@ export class VoiceCall {
               ? 'Respond to the latest unrelated question or symptom. No pack or dose was confirmed.'
               : 'Ask once whether the name and strength on their label match. Do not ask about the dose yet.' };
           }
+        } else if (call.name === 'reply_out_loud') {
+          output = { ok: true, note: 'Answer the patient out loud now, briefly, in ' + (this.farewell?.language ?? 'their language') + '. No dose was recorded.' };
         } else if (call.name === 'ask_dose') {
           askDose = this.doseQuestions.find(question => question.medicineId === args.medicine_id) ?? null;
           output = askDose ? { ok: true, note: 'The app will speak this question. Wait for a new reply.' } : { ok: false, error: 'Unknown medicine on this call.' };
@@ -497,6 +498,13 @@ export class VoiceCall {
         } else {
           if (call.name === 'record_dose') this.doseAnswer = null;
           output = await this.onTool(call.name, args);
+          // After a saved "taken", the only acknowledgment is the short yes line: in Telugu the app
+          // has already played "మంచిది అండి"; other languages say their yes line once, nothing more.
+          if (call.name === 'record_dose' && output?.ok && output.recorded === 'taken') {
+            output = { ...output, note: this.farewell?.recordedConfirmation
+              ? 'Saved. The app already played the acknowledgment. Do not thank or acknowledge again. Next: call ask_dose for the next medicine, or if every medicine is covered, say the goodbye line and call end_call.'
+              : 'Saved. Say exactly ' + JSON.stringify(this.farewell?.confirmation ?? 'Good.') + ' and no other thanks or acknowledgment. Then call ask_dose for the next medicine, or if every medicine is covered, say the goodbye line and call end_call.' };
+          }
           if (call.name === 'show_pack' && output?.ok && this.structuredDoseQuestions) {
             this.packCheck = this.doseQuestions.find(question => question.medicineId === args.medicine_id) ?? null;
             this.doseAnswer = null;

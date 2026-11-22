@@ -364,3 +364,5 @@ input[type="time"], input[type="date"] { min-width: 0; width: 100%; -webkit-appe
 .chips.days .chip.day { padding: .35rem .7rem; font-size: .9rem; min-width: 48px; }
 .days-field .alt-start { display: flex; gap: 8px; align-items: center; }
 .days-field .alt-start input { width: auto; }
+.demo-langs { margin-top: 18px; }
+.demo-langs .demo-lang { gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
