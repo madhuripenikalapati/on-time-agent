@@ -114,3 +114,10 @@ test('two unreadable lines in a row stay two medicines', () => {
   assert.equal(out.medicines.length, 4);
   assert.deepEqual(out.medicines.map(m => m.meal), ['breakfast', 'dinner', 'breakfast', 'dinner']);
 });
+
+test('a smudged reading that matches no real medicine does not block three that agree', () => {
+  const ok = row => read(row);
+  const out = voteReadings([ok(row('Preganix', null, 'breakfast', 'Pain tablet')), ok(row('Pregenix', null, 'breakfast', 'Pain tablet')), ok(row('Preganix', null, 'breakfast', 'Pain tablet')), ok(row('Pigenix', null, 'breakfast', null))]);
+  assert.equal(out.medicines[0].doubt, null);
+  assert.match(out.medicines[0].contains, /Pregabalin/);
+});
