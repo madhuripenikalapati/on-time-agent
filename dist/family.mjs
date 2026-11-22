@@ -4,7 +4,7 @@ import {
   shrinkImage, fileToBase64, packCard, toast,
 } from './ui.mjs';
 import { LANGUAGES, languageOf } from './languages.mjs';
-import { DAY_OPTIONS, takenOn, dosesPerWeek, course, dosesLeftInCourse, addDays } from './schedule.mjs';
+import { takenOn, dosesPerWeek, course, dosesLeftInCourse, addDays, normalizeDays, weekdaysOf, daysSummary, WEEK_ORDER, WEEKDAYS, WEEKDAY_SHORT } from './schedule.mjs';
 
 const alertCopy = {
   pack_mismatch: ['💊', 'Needs help checking the pack'],
@@ -741,6 +741,29 @@ export function mountFamily(root, id, { stage = false } = {}) {
       h('span', { class: 'small ' + (c?.state === 'finished' ? 'warn-text' : 'muted') }, !c ? 'Ongoing, no end date' : c.state === 'finished' ? 'Course finished on ' + day(Date.parse(c.ends)) : 'Ends ' + day(Date.parse(c.ends)) + (c.state === 'active' ? ' · day ' + c.day + ' of ' + c.total : '')));
   }
 
+  // Any set of weekdays, every day, or every other day. Tap the days it is taken.
+  function daysField(m, redraw) {
+    const value = normalizeDays(m.days);
+    const chosen = new Set(weekdaysOf(value) ?? []);
+    const set = next => { m.days = next ?? ''; if (m.days === 'alt' && !m.startDate) m.startDate = data.today; redraw(); };
+    const toggle = weekday => {
+      const days = new Set(value === 'alt' ? [] : chosen);
+      days.has(weekday) ? days.delete(weekday) : days.add(weekday);
+      set(normalizeDays([...days].map(d => WEEKDAYS[d]).join(',')));
+    };
+    const chip = (label, on, onclick, title) => h('button', { type: 'button', class: 'chip day' + (on ? ' on' : ''), 'aria-pressed': String(on), title, onclick }, label);
+    const summary = value === 'alt'
+      ? 'Every other day, starting ' + day(Date.parse(m.startDate || data.today))
+      : daysSummary(value) || 'Tap the days it is taken';
+    return h('div', { class: 'field wide days-field' + (value ? '' : ' missing') }, 'Days',
+      h('div', { class: 'chips days' },
+        chip('Every day', value === 'daily', () => set('daily')),
+        chip('Alternate days', value === 'alt', () => set('alt'), 'Every other day'),
+        ...WEEK_ORDER.map(d => chip(WEEKDAY_SHORT[d], chosen.has(d), () => toggle(d)))),
+      value === 'alt' ? h('label', { class: 'small muted alt-start' }, 'First day ', h('input', { type: 'date', value: m.startDate || data.today, onchange: e => { m.startDate = e.target.value; redraw(); } })) : null,
+      h('span', { class: 'small ' + (value ? 'muted' : 'warn-text') }, summary));
+  }
+
   function medCard(m, index, redraw) {
     const set = key => event => { m[key] = event.target.value; event.target.closest('.field')?.classList.toggle('missing', !event.target.value); };
     const input = (key, attrs = {}) => h('input', { value: m[key] ?? '', oninput: set(key), ...attrs });
@@ -770,7 +793,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         f('With meal', select('meal', [['breakfast', 'Breakfast'], ['lunch', 'Lunch'], ['dinner', 'Dinner']]), 'meal'),
         f(m.assumedTiming ? 'Timing · not written, so after meal' : 'Timing', select('timing', [['after', 'After meal'], ['before', 'Before meal'], ['fixed', 'Fixed time']]), 'timing'),
         f('Usual time', input('time', { type: 'time' })),
-        f('Days', select('days', DAY_OPTIONS), 'days'),
+        daysField(m, redraw),
         courseField(m, redraw),
         f(m.aiStock ? 'Tablets left · AI counted' : 'Tablets left', input('stock', { type: 'number', min: 0, step: 0.5, placeholder: 'count' }), null, m.aiStock ? 'suggested' : ''),
         h('div', { class: 'field' }, ' ', h('button', { class: 'btn small danger', onclick: () => { editor.medicines.splice(index, 1); redraw(); } }, 'Remove')),

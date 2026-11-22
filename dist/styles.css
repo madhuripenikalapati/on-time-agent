@@ -358,3 +358,7 @@ input[type="time"], input[type="date"] { min-width: 0; width: 100%; -webkit-appe
 .landing { padding-top: max(40px, calc(env(safe-area-inset-top) + 20px)); }
 .notice.choice { display: grid; gap: 8px; }
 .med .contains { display: block; font-size: .78rem; font-weight: 500; color: var(--sub); margin: 2px 0 4px; }
+.days-field .chips.days { margin: 4px 0 2px; gap: 6px; }
+.chips.days .chip.day { padding: .35rem .7rem; font-size: .9rem; min-width: 48px; }
+.days-field .alt-start { display: flex; gap: 8px; align-items: center; }
+.days-field .alt-start input { width: auto; }
