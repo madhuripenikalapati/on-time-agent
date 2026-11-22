@@ -426,6 +426,18 @@ export class VoiceCall {
     const { decision, reason } = classifyTurn(transcript, { agentSpeaking: speakingWhenStarted, agentText: this.agentText });
     if (transcript.trim() && decision !== 'noise') this.update({ type: 'caller-said', text: cleanText(transcript, { caller: true }) });
 
+    // Elders answer in two breaths: "అవును… వేసుకున్నాను". The first part already saved the dose,
+    // so a short second part right after the save is the same answer, not a new reply: don't make
+    // the agent answer it (it improvised "one moment, still saving") or re-ask the question. It
+    // stays in the conversation, so anything important in it is still seen on the next turn.
+    const words = transcript.trim().split(/\s+/).filter(Boolean).length;
+    if (this.structuredDoseQuestions && !this.doseAnswer && !this.packCheck && Date.now() - (this.savedAt ?? 0) < 6000
+      && words && words <= 3 && !/[?？]/u.test(transcript) && !['stop word', 'question', 'correction'].includes(interrupt)) {
+      this.duck(false);
+      this.logTurn(transcript, 'backchannel', 'same answer as the saved dose', utterance);
+      return;
+    }
+
     if (decision === 'noise' || decision === 'backchannel') {
       this.duck(false);
       // Remove it so the model never treats "సరే" as the answer to a later question.
@@ -500,6 +512,7 @@ export class VoiceCall {
           output = await this.onTool(call.name, args);
           // After a saved "taken", the only acknowledgment is the short yes line: in Telugu the app
           // has already played "మంచిది అండి"; other languages say their yes line once, nothing more.
+          if (call.name === 'record_dose' && output?.ok) this.savedAt = Date.now();
           if (call.name === 'record_dose' && output?.ok && output.recorded === 'taken') {
             output = { ...output, note: this.farewell?.recordedConfirmation
               ? 'Saved. The app already played the acknowledgment. Do not thank or acknowledge again. Next: call ask_dose for the next medicine, or if every medicine is covered, say the goodbye line and call end_call.'
