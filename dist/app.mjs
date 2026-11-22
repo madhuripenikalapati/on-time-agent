@@ -100,7 +100,7 @@ function landing() {
       h('h2', {}, 'Language demos'),
       h('p', {}, 'Ready-made families with the sample prescription and pack photos. Each one calls in its own language only.'),
       ...[['telugu', 'Telugu demo · తెలుగు'], ['hindi', 'Hindi demo · हिन्दी'], ['english', 'English demo']].map(([key, label]) => h('div', { class: 'row demo-lang' },
-        h('button', { class: 'btn primary', onclick: event => openDemo(event, key, false, '') }, label),
+        h('button', { class: 'btn primary', onclick: event => openDemo(event, key, false, '&presenter=1') }, label),
         h('button', { class: 'btn small', onclick: event => openDemo(event, key, false, '&view=stage') }, 'Stage view'),
         h('button', { class: 'btn small ghost', onclick: event => openDemo(event, key, true, '') }, 'Reset')))),
     h('p', { class: 'footnote' }, 'Hackathon prototype. Use sample prescriptions.'),
