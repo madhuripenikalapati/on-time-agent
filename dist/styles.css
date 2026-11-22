@@ -357,3 +357,4 @@ input[type="time"], input[type="date"] { min-width: 0; width: 100%; -webkit-appe
 .toast { bottom: calc(110px + env(safe-area-inset-bottom)); text-align: center; border-radius: 18px; }
 .landing { padding-top: max(40px, calc(env(safe-area-inset-top) + 20px)); }
 .notice.choice { display: grid; gap: 8px; }
+.med .contains { display: block; font-size: .78rem; font-weight: 500; color: var(--sub); margin: 2px 0 4px; }

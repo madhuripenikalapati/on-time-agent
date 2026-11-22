@@ -39,7 +39,8 @@ Resources:
       Runtime: nodejs22.x
       Architectures: [arm64]
       Timeout: 30
-      MemorySize: 512
+      # 1536 MB gives about one full vCPU: matching readings to 240,000 real medicines stays fast.
+      MemorySize: 1536
       Environment:
         Variables:
           SECRET_ARN: !Ref PilotSecretArn

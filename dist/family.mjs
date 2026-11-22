@@ -447,7 +447,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
           name: row.name ?? '', strength: row.strength ?? '', amount: row.amount ?? '',
           nickname: row.nickname ?? '', use: row.use ?? '', aiNickname: Boolean(row.nickname || row.use),
           // Indian prescriptions write "before food" when it matters; otherwise it is taken after the meal.
-          meal: row.meal ?? '', timing: row.timing ?? (row.meal ? 'after' : ''), assumedTiming: !row.timing && Boolean(row.meal), time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '', doubt: row.doubt ?? '',
+          meal: row.meal ?? '', timing: row.timing ?? (row.meal ? 'after' : ''), assumedTiming: !row.timing && Boolean(row.meal), time: row.time ?? '', days: row.days ?? '', source: row.source ?? '', stock: '', doubt: row.doubt ?? '', contains: row.contains ?? '',
           courseDays: /^\d{1,3}$/.test(String(row.duration_days ?? '')) && +row.duration_days >= 1 && +row.duration_days <= 365 ? +row.duration_days : '',
         })).map(m => { const pack = packOf(m); return pack ? { ...m, photo: pack.photo ?? m.photo, stock: pack.stock ?? m.stock } : m; });
         let added = drafted;
@@ -610,7 +610,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       editor.settings = { followUpMinutes: Number(followMinutes.value) || 30, allowFollowUp: allowFollow.checked, shareWithFamily: share.checked, autoCalls: autoCalls.checked };
       save.disabled = true;
       try {
-        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, doubt, assumedTiming, ...m }) => m) });
+        data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, doubt, assumedTiming, contains, ...m }) => m) });
         toast('Plan saved. On Time will use it on the next call.');
         editor = null;
         tab = 'today';
@@ -762,7 +762,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
         m.photo ? h('button', { class: 'btn small ghost', onclick: () => { m.photo = ''; redraw(); } }, 'Remove photo') : null),
       h('div', { class: 'fields' },
         h('label', { class: 'field wide' + (!m.name || m.doubt ? ' missing' : '') }, 'Medicine (as written)',
-          input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: () => { const wasUnsure = Boolean(m.doubt); m.doubt = ''; if (!m.nickname || m.aiNickname) suggestNamesFor([m]); if (wasUnsure) redraw(); } })),
+          m.contains ? h('span', { class: 'contains' }, 'Contains ' + m.contains) : null,
+          input('name', { placeholder: 'e.g. Glycomet 500', maxlength: 60, onchange: () => { m.contains = ''; const wasUnsure = Boolean(m.doubt); m.doubt = ''; if (!m.nickname || m.aiNickname) suggestNamesFor([m]); if (wasUnsure) redraw(); } })),
         f(m.aiNickname ? 'Simple name · AI suggested, please check' : 'Simple name (what they call it)', input('nickname', { placeholder: 'e.g. Sugar tablet', maxlength: 40, list: 'nicknames', oninput: event => { m.nickname = event.target.value; m.aiNickname = false; } }), 'nickname', 'wide' + (m.aiNickname ? ' suggested' : '')),
         f('Strength', input('strength', { placeholder: '40 mg', maxlength: 40 }), 'strength'),
         f('Dose', input('amount', { placeholder: '1 tablet', maxlength: 40 }), 'amount'),

@@ -79,3 +79,24 @@ test('one comparable reading is flagged even if the model reported no doubts', (
   assert.match(draft.doubt, /Only one comparable reading/);
   assert.equal(draft.nickname, null);
 });
+
+test('different spellings of the same real medicine agree: no review needed', () => {
+  const out = voteReadings([
+    read(row('Febutop', '40 mg', 'breakfast', 'Uric acid tablet')), read(row('Feburic', '40 mg', 'breakfast', 'Uric acid tablet')),
+    read(row('Febuxor', '40 mg', 'breakfast', 'Uric acid tablet')), read(row('Febutop', '40 mg', 'breakfast', 'Uric acid tablet')),
+    read(row('Febutop', '40 mg', 'breakfast', 'Uric acid tablet')),
+  ]);
+  assert.equal(out.medicines[0].doubt, null);
+  assert.match(out.medicines[0].contains, /Febuxostat/);
+  assert.equal(out.medicines[0].nickname, 'Uric acid tablet');
+});
+
+test('the same medicine at different strengths is still a conflict', () => {
+  const out = voteReadings([read(row('Febutop', '40 mg', 'breakfast', null)), read(row('Febutop', '80 mg', 'breakfast', null)), read(row('Febutop', '40 mg', 'breakfast', null))]);
+  assert.ok(out.medicines[0].doubt);
+});
+
+test('a reading with no close real medicine is compared by spelling, so it still flags', () => {
+  const out = voteReadings([read(row('Ketosteril', null, 'lunch', 'Kidney tablet')), read(row('Ketosteril', null, 'lunch', 'Kidney tablet')), read(row('Ketoguard DS', null, 'lunch', null))]);
+  assert.ok(out.medicines[0].doubt);
+});
