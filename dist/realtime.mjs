@@ -166,6 +166,13 @@ export class VoiceCall {
     this.wantResponse = false;
     this.pendingDoseQuestion = doseQuestion;
     this.responseActive = true;
+    if (response?.instructions && this.farewell?.language) {
+      response = {
+        ...response,
+        instructions: 'Speak only in ' + this.farewell.language + '. Never assume a dose was taken and never speak the caregiver summary. '
+          + response.instructions,
+      };
+    }
     this.send({ type: 'response.create', ...(response ? { response } : {}) });
   }
 
@@ -536,10 +543,11 @@ export class VoiceCall {
       }
       this.responseActive = true;
       this.send({ type: 'response.create', response: {
+        output_modalities: ['text'],
         tool_choice: { type: 'function', name: 'end_call' },
         instructions: question || this.questionRetried
-          ? 'The patient did not answer. Call end_call now with an English summary that says what is still unconfirmed.'
-          : 'The conversation is over. Call end_call now with the English summary. Do not say anything more.',
+          ? 'The patient did not answer. Call end_call silently with an English dashboard summary that says what is still unconfirmed. Never assume a dose was taken.'
+          : 'The conversation is over. Call end_call silently with the English dashboard summary. Do not say anything more.',
       } });
     }, retry ? QUESTION_RETRY_MS : question || this.questionRetried ? RETRIED_QUESTION_TIMEOUT_MS : 7000);
   }

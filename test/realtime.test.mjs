@@ -85,6 +85,7 @@ test('silence after a closing statement wraps the call up after 7 seconds', () =
     mock.timers.tick(200);
     const close = sent.find(e => e.type === 'response.create');
     assert.deepEqual(close.response.tool_choice, { type: 'function', name: 'end_call' });
+    assert.deepEqual(close.response.output_modalities, ['text']);
   } finally {
     mock.timers.reset();
   }
