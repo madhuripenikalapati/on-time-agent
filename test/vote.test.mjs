@@ -107,3 +107,10 @@ test('a line no reading could name is always flagged', () => {
   const none = voteReadings([read(row(null, '20 mg', 'breakfast', null)), read(row(null, '20 mg', 'breakfast', null))]);
   assert.ok(none.medicines[0].doubt);
 });
+
+test('two unreadable lines in a row stay two medicines', () => {
+  const page = read([row(null, '20 mg', 'breakfast', null), row(null, '20 mg', 'dinner', null)], [row(null, '20 mg', 'breakfast', null), row(null, '20 mg', 'dinner', null)]);
+  const out = voteReadings([page, page, page]);
+  assert.equal(out.medicines.length, 4);
+  assert.deepEqual(out.medicines.map(m => m.meal), ['breakfast', 'dinner', 'breakfast', 'dinner']);
+});
