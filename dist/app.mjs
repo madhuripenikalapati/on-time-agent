@@ -19,7 +19,7 @@ const view = params.get('view');
 const remembered = (() => { try { return localStorage.getItem('on-time:last'); } catch { return null; } })();
 
 if (id && /^[A-Za-z0-9_-]{8,24}$/.test(id)) {
-  try { if (view !== 'phone') localStorage.setItem('on-time:last', id); } catch {}
+  try { if (!view) localStorage.setItem('on-time:last', id); } catch {}
   // "Add to Home Screen" then opens this family's page, not the landing page. The link is added
   // here, never in index.html: iPhone reads it as the page loads, before code could change it.
   if (view !== 'stage') document.head.append(h('link', { rel: 'manifest', href: '/api/h/' + id + (view === 'phone' ? '/manifest-phone' : '/manifest-family') }));
@@ -41,26 +41,40 @@ if (id && /^[A-Za-z0-9_-]{8,24}$/.test(id)) {
 }
 
 function landing() {
-  const start = async demo => {
+  let starting = false;
+  const start = async (event, demo) => {
+    if (starting) return;
+    starting = true;
+    const button = event.currentTarget;
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = demo ? 'Opening demo…' : 'Starting setup…';
     try {
       const household = await api.create(demo);
       location.href = '?h=' + household.id + (demo ? '&view=stage' : '#welcome');
     } catch (error) {
       toast(error.message, 'bad');
+      starting = false;
+      button.disabled = false;
+      button.textContent = label;
     }
   };
-  app.append(h('div', { class: 'landing' }, h('div', { class: 'landing-inner' },
+  const previous = /^[A-Za-z0-9_-]{8,24}$/.test(remembered ?? '');
+  app.append(h('main', { class: 'landing' }, h('div', { class: 'landing-inner' },
     h('a', { class: 'logo', href: './' }, h('span', { class: 'logo-mark' }, icon('logo')), 'On Time'),
-    h('h1', {}, 'Medicines for the people you love, ', h('em', {}, 'checked in their language'), ' every day.'),
-    h('p', { class: 'lead' }, 'For a parent, a grandparent, a spouse, or anyone you care for who takes daily medicines. Snap the prescription. On Time calls them at the right time in their own language (Telugu, Hindi, Tamil, Kannada, Malayalam, Marathi, Bengali, Gujarati or English), listens like a person would, shows them the right pack, and tells you how it went.'),
-    h('div', { class: 'row' },
-      h('button', { class: 'btn primary', onclick: () => start(true) }, 'Try the demo family'),
-      h('button', { class: 'btn', onclick: () => start(false) }, 'Set up my family'),
-      remembered ? h('a', { class: 'btn ghost', href: '?h=' + remembered }, 'Continue where I left off →') : null),
-    h('div', { class: 'how' },
-      h('div', {}, h('b', {}, '1 · Snap the prescription'), h('span', {}, 'AI drafts each medicine, dose and meal time. You check it and add a photo of each pack.')),
-      h('div', {}, h('b', {}, '2 · A real call, in their language'), h('span', {}, '“సరే, సరే” and it keeps going. “ఆగండి, ఈ tablet?” and it stops and shows the pack.')),
-      h('div', {}, h('b', {}, '3 · You see it live'), h('span', {}, 'Doses, callbacks, pack mix-ups and symptoms, with an English summary of every call.'))),
-    h('p', { class: 'footnote' }, 'Hackathon prototype · use sample prescriptions only · On Time never gives medical advice'),
+    h('h1', {}, 'Medicine reminders in ', h('em', {}, 'your language')),
+    h('p', { class: 'lead' }, 'Set up check-in calls for yourself or someone you care for. Review the prescription, add medicine pack photos, and see which doses were reported or need follow-up.'),
+    h('div', { class: 'landing-options' },
+      h('section', { class: 'landing-option' },
+        h('h2', {}, 'Manage a medicine plan'),
+        h('p', {}, 'For patients, family members, nurses and paid caregivers.'),
+        h('div', { class: 'row' },
+          previous ? h('a', { class: 'btn primary', href: '?h=' + remembered }, 'Continue setup or open plan') : null,
+          h('button', { class: 'btn' + (previous ? '' : ' primary'), onclick: event => start(event, false) }, 'Start setup'))),
+      h('section', { class: 'landing-option' },
+        h('h2', {}, 'Explore the demo'),
+        h('p', {}, 'Try a Telugu reminder call and caregiver handoff using a sample medicine plan.'),
+        h('button', { class: 'btn', onclick: event => start(event, true) }, 'Open sample demo'))),
+    h('p', { class: 'footnote' }, 'Hackathon prototype. Use sample prescriptions.'),
   )));
 }

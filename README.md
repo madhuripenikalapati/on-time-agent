@@ -89,7 +89,7 @@ node server.mjs                      # http://localhost:8091
 node --test test/*.test.mjs
 ```
 
-Run `node --test test/*.test.mjs` (43 tests). Open `/` and choose **Try the demo family**. That opens the **stage** view: the patient's phone on the left and the family dashboard on the right, which is the best layout for a projector. Use **Call Lakshmi now**, then answer on the phone. Voice calls need a microphone and Chrome, Edge or Safari. Open the phone view on a real phone with `?h=<id>&view=phone`.
+Run `node --test test/*.test.mjs` (43 tests). Open `/` and choose **Open sample demo**. That opens the **stage** view: the patient's phone on the left and the family dashboard on the right, which is the best layout for a projector. Use **Call Lakshmi now**, then answer on the phone. Voice calls need a microphone and Chrome, Edge or Safari. Open the phone view on a real phone with `?h=<id>&view=phone`.
 
 ## Deploy (AWS)
 

@@ -24,9 +24,10 @@ export function mountFamily(root, id, { stage = false } = {}) {
   const tabs = Object.fromEntries(['today', 'medicines', 'calls'].map(name => [name,
     h('button', { class: 'tab', role: 'tab', onclick: () => select(name) }, { today: 'Today', medicines: 'Medicines', calls: 'Calls' }[name])]));
   const who = h('div', { class: 'who' });
+  const navigation = h('nav', { class: 'tabs', role: 'tablist' }, Object.values(tabs));
   const top = h('header', { class: 'topbar' }, h('div', { class: 'inner' },
     h('a', { class: 'logo', href: stage ? '#' : './' }, h('span', { class: 'logo-mark' }, icon('logo')), 'On Time'),
-    h('nav', { class: 'tabs', role: 'tablist' }, Object.values(tabs)),
+    navigation,
     h('div', { class: 'spacer' }),
     who,
   ));
@@ -66,11 +67,13 @@ export function mountFamily(root, id, { stage = false } = {}) {
   function render() {
     if (!data) return;
     for (const [name, el] of Object.entries(tabs)) el.setAttribute('aria-selected', String(name === tab));
+    const needsSetup = !data.onboarded && !data.medicines.length;
+    navigation.hidden = who.hidden = needsSetup;
     const name = data.patient.name;
     const main = data.caregivers?.find(c => c.primary);
     who.replaceChildren(h('span', { class: 'name' }, (main ? main.name + ' (' + relationLabel[main.relation] + ') · caring for ' : data.patient.caregiverName ? data.patient.caregiverName + ' · caring for ' : 'Caring for ') + name), h('span', { class: 'avatar' }, name[0]));
     // A new family starts with onboarding.
-    if (!data.onboarded && !data.medicines.length && tab !== 'welcome') tab = 'welcome';
+    if (needsSetup && tab !== 'welcome') tab = 'welcome';
     if (tab === 'welcome') { if (!body.querySelector('.welcome')) body.replaceChildren(welcome()); return; }
     if (tab === 'today') body.replaceChildren(today());
     else if (tab === 'calls') body.replaceChildren(calls());
@@ -660,11 +663,12 @@ export function mountFamily(root, id, { stage = false } = {}) {
     };
     const root = h('div', { class: 'welcome' });
     const draw = () => {
+      const self = state.setupBy === 'self';
       const patient = state.name.trim() || 'them';
       const roles = [
-        ['family', '👨‍👩‍👧', 'I’m family', 'Son, daughter, spouse, grandchild…'],
-        ['caretaker', '🧑‍⚕️', 'I’m a caretaker', 'A nurse or helper who looks after them'],
-        ['self', '🙋', 'It’s for me', 'I take the medicines myself'],
+        ['family', '👨‍👩‍👧', 'I’m helping a family member', 'Set up a plan for someone in your family.'],
+        ['caretaker', '🧑‍⚕️', 'I’m a professional caregiver', 'Set up a plan as a nurse or paid caregiver.'],
+        ['self', '🙋', 'I’m setting up for myself', 'Manage my own medicines and reminders.'],
       ];
       const nameInput = h('input', { value: state.name, placeholder: 'e.g. Lakshmi', maxlength: 40, oninput: e => { state.name = e.target.value; drawAddress(); } });
       const address = h('div', { class: 'chips' });
@@ -695,18 +699,18 @@ export function mountFamily(root, id, { stage = false } = {}) {
         }
       } }, data.onboarded ? 'Save family' : 'Continue to medicines →');
       root.replaceChildren(
-        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Family' : 'Welcome to On Time'), h('p', {}, 'Tell us who takes the medicines and who looks after them. On Time calls them in their language and keeps everyone here updated.'))),
+        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Edit profile and caregivers' : 'Set up a medicine plan'), h('p', {}, 'Choose who the plan is for and the language to use on calls. You’ll add medicines next.'))),
         h('div', { class: 'stack' },
-          h('section', { class: 'card' }, h('h2', {}, '1 · Who is setting this up?'),
-            h('div', { class: 'roles' }, roles.map(([value, emoji, title, hint]) => h('button', { type: 'button', class: 'role' + (state.setupBy === value ? ' on' : ''), onclick: () => {
+          h('section', { class: 'card' }, h('h2', {}, 'Who is setting up the plan?'),
+            h('div', { class: 'roles' }, roles.map(([value, emoji, title, hint]) => h('button', { type: 'button', class: 'role' + (state.setupBy === value ? ' on' : ''), 'aria-pressed': String(state.setupBy === value), onclick: () => {
               state.setupBy = value;
               if (value === 'self') state.people = state.people.filter(p => p.name.trim());
               else if (!state.people.length) state.people.push({ name: '', relation: value === 'caretaker' ? 'caretaker' : 'son', primary: true });
               else if (value === 'caretaker') state.people[0].relation = 'caretaker';
               draw();
             } }, h('span', { class: 'emoji' }, emoji), h('strong', {}, title), h('span', { class: 'muted small' }, hint))))),
-          h('section', { class: 'card' }, h('h2', {}, state.setupBy === 'self' ? '2 · About you' : '2 · Who takes the medicines?'),
-            h('div', { class: 'settings' }, h('label', { class: 'field' }, 'Their name', nameInput)),
+          h('section', { class: 'card' }, h('h2', {}, self ? 'About you' : 'Who takes the medicines?'),
+            h('div', { class: 'settings' }, h('label', { class: 'field' }, self ? 'Your name' : 'Patient’s name', nameInput)),
             h('p', { class: 'hint' }, 'Which language should On Time speak on the call?'),
             h('div', { class: 'chips languages' }, Object.entries(LANGUAGES).map(([code, l]) => h('button', { type: 'button', class: 'chip lang' + (state.language === code ? ' on' : ''), title: l.name, onclick: () => {
               // A greeting chosen for the old language makes no sense in the new one.
@@ -714,8 +718,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
               state.language = code;
               draw();
             } }, h('span', { class: 'native' }, l.native), code === 'en' ? null : h('span', { class: 'small muted' }, l.name)))),
-            h('p', { class: 'hint' }, 'How should On Time greet ' + patient + ' on the call?'), address, h('label', { class: 'field' }, custom)),
-          h('section', { class: 'card' }, h('h2', {}, state.setupBy === 'self' ? '3 · Family to keep updated (optional)' : '3 · Family and caretakers'),
+            h('p', { class: 'hint' }, 'How should On Time greet ' + (self ? 'you' : patient) + ' on the call?'), address, h('label', { class: 'field' }, custom)),
+          h('section', { class: 'card' }, h('h2', {}, self ? 'People to keep updated (optional)' : 'Caregiver contacts'),
             h('p', { class: 'hint' }, 'The main contact is who On Time mentions on the call (“I’ll tell Ravi”) and who gets alerts first.'),
             people,
             h('button', { type: 'button', class: 'btn small', onclick: () => { state.people.push({ name: '', relation: 'daughter', primary: !state.people.length }); draw(); } }, icon('plus'), 'Add someone')),

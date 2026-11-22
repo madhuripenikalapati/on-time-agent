@@ -182,10 +182,11 @@ h1, h2, h3, p { margin: 0; }
 .landing h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); letter-spacing: -.045em; line-height: 1.04; }
 .landing h1 em { font-style: normal; color: var(--brand); }
 .landing p.lead { color: var(--sub); font-size: 1.15rem; max-width: 600px; }
-.how { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; text-align: left; width: 100%; }
-.how div { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
-.how b { display: block; margin-bottom: 4px; }
-.how span { color: var(--sub); font-size: .92rem; }
+.landing-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: 100%; text-align: left; }
+.landing-option { display: grid; align-content: start; justify-items: start; gap: 10px; padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
+.landing-option h2 { font-size: 1.15rem; }
+.landing-option p { color: var(--sub); }
+.topbar [hidden] { display: none; }
 .footnote { color: var(--faint); font-size: .8rem; text-align: center; margin-top: 30px; }
 
 /* ===== Amma's phone ===== */
@@ -265,9 +266,10 @@ h1, h2, h3, p { margin: 0; }
   .med { grid-template-columns: 1fr; }
   .med .fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings { grid-template-columns: 1fr; }
-  .how { grid-template-columns: 1fr; }
+
 }
 @media (max-width: 640px) {
+  .landing-options { grid-template-columns: 1fr; }
   .topbar .inner { flex-wrap: wrap; gap: 8px; }
   .tabs { order: 3; width: 100%; margin: 0; overflow-x: auto; }
   .who .name { display: none; }
