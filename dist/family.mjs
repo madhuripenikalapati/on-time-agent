@@ -16,7 +16,7 @@ const alertCopy = {
 
 export function mountFamily(root, id, { stage = false } = {}) {
   let data = null;
-  let tab = ['today', 'medicines', 'calls', 'welcome'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'today';
+  let tab = ['today', 'medicines', 'calls', 'welcome', 'invite'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'today';
   let editor = null; // draft of the medicine plan while editing
   let suggestNamesFor = () => {}; // set while the medicines editor is open
   let busy = false;
@@ -74,6 +74,8 @@ export function mountFamily(root, id, { stage = false } = {}) {
     who.replaceChildren(h('span', { class: 'name' }, (main ? main.name + ' (' + relationLabel[main.relation] + ') · caring for ' : data.patient.caregiverName ? data.patient.caregiverName + ' · caring for ' : 'Caring for ') + name), h('span', { class: 'avatar' }, name[0]));
     // A new family starts with onboarding.
     if (needsSetup && tab !== 'welcome') tab = 'welcome';
+    if (tab === 'invite' && (stage || data.setupBy === 'self' || !data.medicines.length)) tab = 'today';
+    if (tab === 'invite') { if (!body.querySelector('.patient-invite')) body.replaceChildren(patientInvite()); return; }
     if (tab === 'welcome') { if (!body.querySelector('.welcome')) body.replaceChildren(welcome()); return; }
     if (tab === 'today') body.replaceChildren(today());
     else if (tab === 'calls') body.replaceChildren(calls());
@@ -138,7 +140,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
               return result;
             }) }, icon('phone'), 'Call ' + name + ' now'),
         slotSelect,
-        h('a', { class: 'btn', href: phoneUrl(), target: '_blank', rel: 'noopener' }, 'Open ' + name + '’s phone ↗'),
+        stage || data.medicines.length ? h('a', { class: 'btn', href: phoneUrl(), target: '_blank', rel: 'noopener' }, 'Open ' + name + '’s phone ↗') : null,
       ),
     );
 
@@ -188,11 +190,13 @@ export function mountFamily(root, id, { stage = false } = {}) {
         : h('p', { class: 'muted' }, 'After each call you’ll see a short English summary here.')));
     const refills = refillLines();
     if (refills.length) right.push(h('section', { class: 'card' }, h('h2', {}, 'Refills'), h('div', { class: 'dose-list' }, refills)));
-    right.push(h('section', { class: 'card share' },
+    if (stage || data.medicines.length) right.push(h('section', { class: 'card share' },
       h('h2', {}, 'Share'),
       h('p', { class: 'hint' }, 'Open the family view on your phone, or set up ' + name + '’s phone. In Chrome, use the address bar’s share icon to show a QR code.'),
       copyRow('Family view', familyUrl()),
-      copyRow(name + '’s phone', phoneUrl()),
+      !stage && data.setupBy !== 'self' && data.medicines.length
+        ? h('button', { class: 'btn small', onclick: () => select('invite') }, 'Patient invite')
+        : copyRow(name + '’s phone', phoneUrl()),
     ));
     const dashboard = h('div', { class: 'grid' }, h('div', { class: 'stack' }, left), h('div', { class: 'stack' }, right));
     return featuredMedicine ? h('div', { class: 'stack' }, stageHandoff(featured, featuredMedicine), dashboard) : dashboard;
@@ -270,6 +274,16 @@ export function mountFamily(root, id, { stage = false } = {}) {
     box.remove();
     if (!ok && shown) { const range = document.createRange(); range.selectNodeContents(shown); getSelection().removeAllRanges(); getSelection().addRange(range); }
     return ok;
+  }
+
+  function patientInvite() {
+    const name = data.patient.name;
+    return h('section', { class: 'card share patient-invite' },
+      h('h1', {}, 'Invite ' + name),
+      h('p', { class: 'hint' }, 'Send this link to ' + name + ' so they can open On Time on their phone and turn on call alerts.'),
+      copyRow('Patient invite link', phoneUrl()),
+      h('p', { class: 'hint' }, 'Share this link privately with the patient or someone helping set up their phone.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => select('today') }, 'Go to dashboard')));
   }
 
   function copyRow(label, url) {
@@ -613,12 +627,12 @@ export function mountFamily(root, id, { stage = false } = {}) {
       editor.settings = { followUpMinutes: Number(followMinutes.value) || 30, allowFollowUp: allowFollow.checked, shareWithFamily: share.checked, autoCalls: autoCalls.checked };
       save.disabled = true;
       try {
+        const firstPlan = !data.medicines.length;
         data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, doubt, assumedTiming, contains, ...m }) => m) });
         toast('Plan saved. On Time will use it on the next call.');
         editor = null;
-        tab = 'today';
-        if (!stage) history.replaceState(null, '', '#today');
-        render();
+        select(!stage && firstPlan && data.setupBy !== 'self' && data.medicines.length ? 'invite' : 'today');
+        if (tab === 'invite') window.scrollTo(0, 0);
       } catch (error) {
         toast(error.message, 'bad');
       } finally {
@@ -654,63 +668,83 @@ export function mountFamily(root, id, { stage = false } = {}) {
 
   // ---------- Welcome (onboarding) ----------
   function welcome() {
+    const savedContacts = structuredClone(data.caregivers ?? []);
+    const wasSelf = data.setupBy === 'self';
+    const owner = wasSelf ? null : savedContacts.shift();
     const state = {
-      setupBy: data.setupBy || 'family',
-      name: data.onboarded ? data.patient.name : '',
+      forWhom: data.onboarded ? (wasSelf ? 'self' : 'someone') : '',
+      ownerName: data.onboarded ? (wasSelf ? data.patient.name : owner?.name ?? '') : '',
+      name: data.onboarded && !wasSelf ? data.patient.name : '',
       callName: data.patient.callName || '',
       language: data.patient.language || 'te',
-      people: structuredClone(data.caregivers?.length ? data.caregivers : [{ name: '', relation: 'son', primary: true }]),
+      relationship: owner?.relation ?? '',
+      ownerPrimary: owner?.primary ?? true,
+      people: savedContacts,
     };
     const root = h('div', { class: 'welcome' });
     const draw = () => {
-      const self = state.setupBy === 'self';
-      const patient = state.name.trim() || 'them';
-      const roles = [
-        ['family', '👨‍👩‍👧', 'I’m helping a family member', 'Set up a plan for someone in your family.'],
-        ['caretaker', '🧑‍⚕️', 'I’m a professional caregiver', 'Set up a plan as a nurse or paid caregiver.'],
-        ['self', '🙋', 'I’m setting up for myself', 'Manage my own medicines and reminders.'],
-      ];
+      const self = state.forWhom === 'self';
+      const patientName = () => (self ? state.ownerName : state.name).trim();
+      const patient = patientName() || 'them';
       const nameInput = h('input', { value: state.name, placeholder: 'e.g. Lakshmi', maxlength: 40, oninput: e => { state.name = e.target.value; drawAddress(); } });
+      const ownerInput = h('input', { value: state.ownerName, maxlength: 40, oninput: e => { state.ownerName = e.target.value; if (self) drawAddress(); } });
       const address = h('div', { class: 'chips' });
       const custom = h('input', { placeholder: 'Or type how you address them', maxlength: 40, value: state.callName, oninput: e => { state.callName = e.target.value; drawAddress(); } });
       const drawAddress = () => {
         const lang = languageOf(state.language);
-        const options = [(state.name.trim() || 'Name') + lang.honorific, ...lang.addresses];
+        const options = [(patientName() || 'Name') + lang.honorific, ...lang.addresses];
         const current = state.callName || options[0];
         address.replaceChildren(...options.map((option, i) => h('button', { type: 'button', class: 'chip' + (current === option ? ' on' : ''), onclick: () => { state.callName = i === 0 ? '' : option; custom.value = state.callName; drawAddress(); } }, option)));
       };
       drawAddress();
       const people = h('div', { class: 'people' }, state.people.map((person, i) => h('div', { class: 'person' },
-        h('input', { value: person.name, placeholder: i === 0 && state.setupBy !== 'self' ? 'Your name' : 'Name', maxlength: 40, oninput: e => { person.name = e.target.value; } }),
-        h('select', { onchange: e => { person.relation = e.target.value; } }, Object.entries(relationLabel).map(([value, label]) => h('option', { value, selected: person.relation === value }, label))),
-        h('label', { class: 'check' }, h('input', { type: 'radio', name: 'primary', checked: person.primary, onchange: () => { state.people.forEach(x => { x.primary = x === person; }); } }), 'Main contact'),
-        state.people.length > 1 || state.setupBy === 'self' ? h('button', { type: 'button', class: 'btn small ghost', onclick: () => { state.people.splice(i, 1); draw(); } }, 'Remove') : null)));
+        h('input', { value: person.name, placeholder: 'Contact name', maxlength: 40, oninput: e => { person.name = e.target.value; } }),
+        self ? null : h('select', { 'aria-label': 'Contact relationship', onchange: e => { person.relation = e.target.value; } }, Object.entries(relationLabel).map(([value, label]) => h('option', { value, selected: person.relation === value }, label))),
+        h('label', { class: 'check' }, h('input', { type: 'radio', name: 'primary', checked: person.primary, onchange: () => {
+          state.ownerPrimary = false;
+          state.people.forEach(contact => { contact.primary = contact === person; });
+        } }), 'Main contact'),
+        h('button', { type: 'button', class: 'btn small ghost', onclick: () => {
+          if (person.primary) state.ownerPrimary = true;
+          state.people.splice(i, 1);
+          draw();
+        } }, 'Remove'))));
       const finish = h('button', { class: 'btn primary', onclick: async () => {
+        if (!state.ownerName.trim() || !patientName() || (!self && !state.relationship)) {
+          toast(self ? 'Enter your name.' : 'Enter both names and select your relationship to the patient.', 'bad');
+          return;
+        }
         finish.disabled = true;
         try {
-          const caregivers = state.people.filter(p => p.name.trim());
-          data = await api.saveProfile(id, { setupBy: state.setupBy, patient: { name: state.name, callName: state.callName, language: state.language }, caregivers });
-          toast('Saved. Next: add ' + data.patient.name + '’s medicines.');
+          const contacts = state.people.filter(p => p.name.trim());
+          const caregivers = self ? contacts : [{ ...owner, name: state.ownerName, relation: state.relationship, primary: state.ownerPrimary }, ...contacts];
+          const setupBy = self ? 'self' : state.relationship === 'caretaker' ? 'caretaker' : 'family';
+          data = await api.saveProfile(id, { setupBy, patient: { name: patientName(), callName: state.callName, language: state.language }, caregivers });
+          toast('Profile saved.');
           select(data.medicines.length ? 'today' : 'medicines');
         } catch (error) {
           toast(error.message, 'bad');
         } finally {
           finish.disabled = false;
         }
-      } }, data.onboarded ? 'Save family' : 'Continue to medicines →');
+      } }, data.onboarded ? 'Save profile' : 'Continue to medicines →');
       root.replaceChildren(
-        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Edit profile and caregivers' : 'Set up a medicine plan'), h('p', {}, 'Choose who the plan is for and the language to use on calls. You’ll add medicines next.'))),
+        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Edit profile and caregivers' : 'Set up a medicine plan'))),
         h('div', { class: 'stack' },
-          h('section', { class: 'card' }, h('h2', {}, 'Who is setting up the plan?'),
-            h('div', { class: 'roles' }, roles.map(([value, emoji, title, hint]) => h('button', { type: 'button', class: 'role' + (state.setupBy === value ? ' on' : ''), 'aria-pressed': String(state.setupBy === value), onclick: () => {
-              state.setupBy = value;
-              if (value === 'self') state.people = state.people.filter(p => p.name.trim());
-              else if (!state.people.length) state.people.push({ name: '', relation: value === 'caretaker' ? 'caretaker' : 'son', primary: true });
-              else if (value === 'caretaker') state.people[0].relation = 'caretaker';
-              draw();
-            } }, h('span', { class: 'emoji' }, emoji), h('strong', {}, title), h('span', { class: 'muted small' }, hint))))),
-          h('section', { class: 'card' }, h('h2', {}, self ? 'About you' : 'Who takes the medicines?'),
-            h('div', { class: 'settings' }, h('label', { class: 'field' }, self ? 'Your name' : 'Patient’s name', nameInput)),
+          h('section', { class: 'card' },
+            h('h2', {}, 'Who is this plan for?'),
+            h('div', { class: 'roles' }, [['self', 'For me'], ['someone', 'For someone else']].map(([value, title]) => h('button', {
+              type: 'button', class: 'role' + (state.forWhom === value ? ' on' : ''), 'aria-pressed': String(state.forWhom === value),
+              onclick: () => { state.forWhom = value; draw(); },
+            }, h('strong', {}, title))))),
+          state.forWhom ? h('section', { class: 'card' }, h('h2', {}, self ? 'About you' : 'About you and the patient'),
+            h('div', { class: 'settings' },
+              h('label', { class: 'field' }, 'What should we call you?', ownerInput),
+              self ? null : h('label', { class: 'field' }, 'Patient’s name', nameInput),
+              self ? null : h('label', { class: 'field' }, 'Your relationship to the patient',
+                h('select', { onchange: e => { state.relationship = e.target.value; } },
+                  h('option', { value: '' }, 'Select relationship'),
+                  Object.entries(relationLabel).map(([value, label]) => h('option', { value, selected: state.relationship === value }, value === 'caretaker' ? 'Nurse or paid caregiver' : label))))),
             h('p', { class: 'hint' }, 'Which language should On Time speak on the call?'),
             h('div', { class: 'chips languages' }, Object.entries(LANGUAGES).map(([code, l]) => h('button', { type: 'button', class: 'chip lang' + (state.language === code ? ' on' : ''), title: l.name, onclick: () => {
               // A greeting chosen for the old language makes no sense in the new one.
@@ -718,12 +752,18 @@ export function mountFamily(root, id, { stage = false } = {}) {
               state.language = code;
               draw();
             } }, h('span', { class: 'native' }, l.native), code === 'en' ? null : h('span', { class: 'small muted' }, l.name)))),
-            h('p', { class: 'hint' }, 'How should On Time greet ' + (self ? 'you' : patient) + ' on the call?'), address, h('label', { class: 'field' }, custom)),
-          h('section', { class: 'card' }, h('h2', {}, self ? 'People to keep updated (optional)' : 'Caregiver contacts'),
+            h('p', { class: 'hint' }, 'How should On Time greet ' + (self ? 'you' : patient) + ' on the call?'), address, h('label', { class: 'field' }, custom)) : null,
+          state.forWhom ? h('section', { class: 'card' }, h('h2', {}, 'Other contacts (optional)'),
             h('p', { class: 'hint' }, 'The main contact is who On Time mentions on the call (“I’ll tell Ravi”) and who gets alerts first.'),
+            !self && state.people.length ? h('label', { class: 'check' }, h('input', {
+              type: 'radio', name: 'primary', checked: state.ownerPrimary, onchange: () => {
+                state.ownerPrimary = true;
+                state.people.forEach(contact => { contact.primary = false; });
+              },
+            }), 'Make me the main contact') : null,
             people,
-            h('button', { type: 'button', class: 'btn small', onclick: () => { state.people.push({ name: '', relation: 'daughter', primary: !state.people.length }); draw(); } }, icon('plus'), 'Add someone')),
-          h('div', { class: 'row' }, finish),
+            h('button', { type: 'button', class: 'btn small', onclick: () => { state.people.push({ name: '', relation: 'other', primary: self && !state.people.length }); draw(); } }, icon('plus'), 'Add someone')) : null,
+          state.forWhom ? h('div', { class: 'row' }, finish) : null,
         ));
     };
     draw();
