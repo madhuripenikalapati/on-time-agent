@@ -261,8 +261,13 @@ export class VoiceCall {
 
   doseQuestionFor(text) {
     if (!/[?？]\s*$/u.test(text)) return null;
-    const said = normalize(text).replace(/？/gu, '?');
-    const matches = this.doseQuestions.filter(question => said.endsWith(normalize(question.text).replace(/？/gu, '?')));
+    const questionText = value => normalize(value).replace(/？/gu, '?')
+      .replace(/వేసుకున్నారా(?: అండి)?(?: లేదా(?: అండి)?)?\s*\?$/u, 'వేసుకున్నారా?');
+    const said = questionText(text);
+    const matches = this.doseQuestions.filter(question => {
+      const expected = questionText(question.text);
+      return said === expected || said.endsWith(' ' + expected);
+    });
     return matches.length === 1 ? { medicineId: matches[0].medicineId, text: matches[0].text } : null;
   }
 

@@ -311,3 +311,24 @@ test('microphone analysis uses the already unlocked context and does not close i
   assert.equal(gain.gain.value, 0);
   assert.deepEqual(disconnected, ['microphone', 'analyser', 'gain']);
 });
+
+test('a fresh Telugu reply can confirm its medicine after a question ending in లేదా', async () => {
+  const { call, tools } = harness();
+  call.doseQuestions = [
+    { medicineId: 'a', text: 'Cholesterol tablet వేసుకున్నారా అండి?' },
+    { medicineId: 'b', text: 'Antibiotic వేసుకున్నారా అండి?' },
+  ];
+  call.agentText = 'క్షమించండి, సరిగ్గా అర్థం కాలేదు. Cholesterol tablet వేసుకున్నారా, లేదా?';
+  call.handle({ type: 'output_audio_buffer.stopped' });
+  call.speechStarted();
+  call.utterances.set('fresh', call.current);
+  call.current = null;
+  call.decide('fresh', 'హా వేసుకున్నాలే.');
+  await call.runTools([
+    tool('record_dose', { medicine_id: 'b', status: 'taken' }, 'wrong'),
+    tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'right'),
+    tool('record_dose', { medicine_id: 'a', status: 'taken' }, 'duplicate'),
+  ], false);
+  assert.deepEqual(tools.map(entry => entry.args.medicine_id), ['a']);
+  call.hangUp();
+});
