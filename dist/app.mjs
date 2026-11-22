@@ -16,10 +16,11 @@ if (!params.get('h')) document.head.append(h('link', { rel: 'manifest', href: '/
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 const id = params.get('h');
 const view = params.get('view');
+const presenter = params.get('presenter') === '1';
 const remembered = (() => { try { return localStorage.getItem('on-time:last'); } catch { return null; } })();
 
 if (id && /^[A-Za-z0-9_-]{8,24}$/.test(id)) {
-  try { if (!view) localStorage.setItem('on-time:last', id); } catch {}
+  try { if (!view && !presenter) localStorage.setItem('on-time:last', id); } catch {}
   // "Add to Home Screen" then opens this family's page, not the landing page. The link is added
   // here, never in index.html: iPhone reads it as the page loads, before code could change it.
   if (view !== 'stage') document.head.append(h('link', { rel: 'manifest', href: '/api/h/' + id + (view === 'phone' ? '/manifest-phone' : '/manifest-family') }));
@@ -34,7 +35,7 @@ if (id && /^[A-Za-z0-9_-]{8,24}$/.test(id)) {
     mountPhone(left, id, { stage: true });
     mountFamily(right, id, { stage: true });
   } else {
-    mountFamily(app, id);
+    mountFamily(app, id, { presenter });
   }
 } else {
   landing();
@@ -42,16 +43,17 @@ if (id && /^[A-Za-z0-9_-]{8,24}$/.test(id)) {
 
 function landing() {
   let starting = false;
-  const start = async (event, demo) => {
+  const start = async (event, mode) => {
     if (starting) return;
     starting = true;
     const button = event.currentTarget;
     const label = button.textContent;
     button.disabled = true;
-    button.textContent = demo ? 'Opening demo…' : 'Starting setup…';
+    button.textContent = mode === 'setup' ? 'Starting setup…' : 'Opening demo…';
     try {
-      const household = await api.create(demo);
-      location.href = '?h=' + household.id + (demo ? '&view=stage' : '#welcome');
+      const household = await api.create(mode === 'sample');
+      const route = { sample: '&view=stage', presenter: '&presenter=1#welcome', setup: '#welcome' };
+      location.href = '?h=' + household.id + route[mode];
     } catch (error) {
       toast(error.message, 'bad');
       starting = false;
@@ -70,11 +72,13 @@ function landing() {
         h('p', {}, 'For patients, family members, nurses and paid caregivers.'),
         h('div', { class: 'row' },
           previous ? h('a', { class: 'btn primary', href: '?h=' + remembered }, 'Continue setup or open plan') : null,
-          h('button', { class: 'btn' + (previous ? '' : ' primary'), onclick: event => start(event, false) }, 'Start setup'))),
+          h('button', { class: 'btn' + (previous ? '' : ' primary'), onclick: event => start(event, 'setup') }, 'Start setup'))),
       h('section', { class: 'landing-option' },
         h('h2', {}, 'Explore the demo'),
         h('p', {}, 'Try a Telugu reminder call and caregiver handoff using a sample medicine plan.'),
-        h('button', { class: 'btn', onclick: event => start(event, true) }, 'Open sample demo'))),
+        h('div', { class: 'row' },
+          h('button', { class: 'btn', onclick: event => start(event, 'sample') }, 'Open sample demo'),
+          h('button', { class: 'btn', onclick: event => start(event, 'presenter') }, 'Start presenter demo')))),
     h('p', { class: 'footnote' }, 'Hackathon prototype. Use sample prescriptions.'),
   )));
 }

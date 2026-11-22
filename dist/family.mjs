@@ -14,12 +14,14 @@ const alertCopy = {
   other: ['ℹ️', 'Needs attention'],
 };
 
-export function mountFamily(root, id, { stage = false } = {}) {
+export function mountFamily(root, id, { stage = false, presenter = false } = {}) {
   let data = null;
   let tab = ['today', 'medicines', 'calls', 'welcome', 'invite'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'today';
   let editor = null; // draft of the medicine plan while editing
   let suggestNamesFor = () => {}; // set while the medicines editor is open
   let busy = false;
+  const advancedReminders = new Set();
+  const reminderTimes = { morning: '09:00', afternoon: '13:30', night: '20:30' };
 
   const tabs = Object.fromEntries(['today', 'medicines', 'calls'].map(name => [name,
     h('button', { class: 'tab', role: 'tab', onclick: () => select(name) }, { today: 'Today', medicines: 'Medicines', calls: 'Calls' }[name])]));
@@ -33,6 +35,29 @@ export function mountFamily(root, id, { stage = false } = {}) {
   ));
   const body = h('main', { class: 'shell' });
   root.append(top, body);
+
+  function presenterControls() {
+    const reminders = Object.entries(reminderTimes).flatMap(([slot, fallback]) => {
+      if (advancedReminders.has(data.today + ':' + slot)) return [];
+      const times = data.medicines.filter(m => slotOf(m) === slot && takenOn(m, data.today)
+        && data.todayDoses?.[m.id]?.status !== 'taken').map(m => m.time || fallback).sort();
+      return times.length ? [{ slot, time: times[0] }] : [];
+    }).sort((a, b) => a.time.localeCompare(b.time));
+    const next = reminders[0];
+    return h('section', { class: 'card stack', 'aria-label': 'Presenter controls' },
+      h('div', {}, h('h2', {}, 'Presenter demo'),
+        h('p', { class: 'hint' }, 'Open the patient link on your phone. Advance a reminder to ring it now without changing your plan or the real clock.')),
+      next ? h('div', {}, 'Next reminder: ' + slotLabel[next.slot] + ' · ' + next.time + ' IST') : null,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', disabled: live() || Boolean(data.ring) || !next,
+          onclick: () => act(async () => {
+            const result = await api.ring(id, { slot: next.slot });
+            advancedReminders.add(data.today + ':' + next.slot);
+            return result;
+          }, 'Demo reminder is ringing') }, 'Advance to next reminder'),
+        h('button', { class: 'btn', onclick: () => select('invite') }, 'Open patient invite')),
+      next ? null : h('p', { class: 'hint' }, 'No more reminders to advance today. Use Call now to rehearse a selected time of day.'));
+  }
 
   const live = () => data?.calls?.[0]?.status === 'live' && Date.now() - data.calls[0].startedAt < 20 * 60_000;
   const poller = poll(id, fresh => { data = fresh; render(); }, {
@@ -74,7 +99,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
     who.replaceChildren(h('span', { class: 'name' }, (main ? main.name + ' (' + relationLabel[main.relation] + ') · caring for ' : data.patient.caregiverName ? data.patient.caregiverName + ' · caring for ' : 'Caring for ') + name), h('span', { class: 'avatar' }, name[0]));
     // A new family starts with onboarding.
     if (needsSetup && tab !== 'welcome') tab = 'welcome';
-    if (tab === 'invite' && (stage || data.setupBy === 'self' || !data.medicines.length)) tab = 'today';
+    if (tab === 'invite' && (stage || (!presenter && data.setupBy === 'self') || !data.medicines.length)) tab = 'today';
     if (tab === 'invite') { if (!body.querySelector('.patient-invite')) body.replaceChildren(patientInvite()); return; }
     if (tab === 'welcome') { if (!body.querySelector('.welcome')) body.replaceChildren(welcome()); return; }
     if (tab === 'today') body.replaceChildren(today());
@@ -144,7 +169,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
       ),
     );
 
-    const left = [hero];
+    const left = presenter && data.medicines.length ? [presenterControls(), hero] : [hero];
     if (live() || (call && call.status === 'live')) left.push(liveCard(call));
     if (otherAlerts.length) left.push(h('section', { class: 'card' },
       h('div', { class: 'card-head' }, h('h2', {}, 'Needs your attention'), h('span', { class: 'pill bad' }, otherAlerts.length)),
@@ -280,7 +305,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const name = data.patient.name;
     return h('section', { class: 'card share patient-invite' },
       h('h1', {}, 'Invite ' + name),
-      h('p', { class: 'hint' }, 'Send this link to ' + name + ' so they can open On Time on their phone and turn on call alerts.'),
+      h('p', { class: 'hint' }, presenter ? 'Open this link on your iPhone and leave the patient view open. Then trigger a reminder from the presenter dashboard.' : 'Send this link to ' + name + ' so they can open On Time on their phone and turn on call alerts.'),
       copyRow('Patient invite link', phoneUrl()),
       h('p', { class: 'hint' }, 'Share this link privately with the patient or someone helping set up their phone.'),
       h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => select('today') }, 'Go to dashboard')));
@@ -605,7 +630,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
     const field = (label, input, cls = '') => h('label', { class: 'field ' + cls }, label, input);
     const followMinutes = h('input', { type: 'number', min: 1, max: 180, value: editor.settings.followUpMinutes });
     const allowFollow = h('input', { type: 'checkbox', checked: editor.settings.allowFollowUp });
-    const autoCalls = h('input', { type: 'checkbox', checked: editor.settings.autoCalls !== false });
+    const autoCalls = h('input', { type: 'checkbox', checked: !presenter && editor.settings.autoCalls !== false, disabled: presenter });
     const share = h('input', { type: 'checkbox', checked: editor.settings.shareWithFamily });
 
     const save = h('button', { class: 'btn primary', onclick: async () => {
@@ -631,7 +656,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         data = await api.savePlan(id, { ...editor, medicines: editor.medicines.map(({ source, aiNickname, aiStock, doubt, assumedTiming, contains, ...m }) => m) });
         toast('Plan saved. On Time will use it on the next call.');
         editor = null;
-        select(!stage && firstPlan && data.setupBy !== 'self' && data.medicines.length ? 'invite' : 'today');
+        select(!stage && firstPlan && (presenter || data.setupBy !== 'self') && data.medicines.length ? 'invite' : 'today');
         if (tab === 'invite') window.scrollTo(0, 0);
       } catch (error) {
         toast(error.message, 'bad');
@@ -729,7 +754,7 @@ export function mountFamily(root, id, { stage = false } = {}) {
         }
       } }, data.onboarded ? 'Save profile' : 'Continue to medicines →');
       root.replaceChildren(
-        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Edit profile and caregivers' : 'Set up a medicine plan'))),
+        h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, data.onboarded ? 'Edit profile and caregivers' : presenter ? 'Set up your presenter demo' : 'Set up a medicine plan'))),
         h('div', { class: 'stack' },
           h('section', { class: 'card' },
             h('h2', {}, 'Who is this plan for?'),
