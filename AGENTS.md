@@ -136,3 +136,54 @@ node --test test/*.test.mjs          # 91 tests, all must pass (the deploy runs 
 - Fix bugs straight away. Keep explanations short and practical.
 - No keyword or regex hacks for understanding language: ground the model in real data instead.
 - Every change goes through a push, which deploys. Check it on the live site afterwards.
+
+## Appendix: everything else a new session needs
+
+### Getting the full conversation, not just these notes
+These notes summarise a very long build session. On the **same Mac**, the original Claude Code conversation can be resumed with its whole history: run `claude --resume` in this folder and pick the On Time session, or use the desktop app's session list. On another machine, `git pull` and start from these notes.
+
+### Infrastructure and secrets (never print or commit secret values)
+- AWS: a hackathon workshop account (role `WSParticipantRole`), region `us-west-2`, SAM stack `on-time-agent-pilot`. **The account is shut down after the hackathon.** The live URL is https://vqe7ihx8pe.execute-api.us-west-2.amazonaws.com
+- Secrets Manager `on-time-agent-pilot` holds `OPENAI_API_KEY`, `PILOT_PASSWORD` and the VAPID keys. Only the Lambda reads it.
+- Deploys: GitHub Actions on every push to `main`, using the repository secrets `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` of the IAM user `on-time-deploy`. Laptop AWS logins (`aws login`) expire within hours, so don't rely on them.
+- **Manual fallback if Actions breaks:** run `./scripts/build.sh` to make `on-time-agent-deploy.zip`. In the AWS console's CloudShell: Actions → Upload file, then `cd ~ && rm -rf ontime && mkdir ontime && cd ontime && unzip -q ~/on-time-agent-deploy.zip && sam deploy --stack-name on-time-agent-pilot --capabilities CAPABILITY_IAM --resolve-s3 --no-confirm-changeset --no-fail-on-empty-changeset --region us-west-2 --parameter-overrides PilotSecretArn=$(aws secretsmanager describe-secret --secret-id on-time-agent-pilot --query ARN --output text)`
+- The Lambda has 1536 MB of memory (about one vCPU) so medicine matching stays fast.
+- Checking a deploy without GitHub's rate-limited API: `curl -s <site>/<file> | grep -c '<new text>'`.
+
+### Test assets
+- `dist/samples/` (public): `prescription.jpg`, a made-up "On Time Demo Clinic" prescription for Lakshmi Devi with 7 medicines; `pack-*.jpg`, matching strips with known tablets left (Metformin 7, Amlodipine 15, Atorvastatin 4, Thyroxine a closed bottle so blank, Pantoprazole 8, Amoxicillin 10, Vitamin D3 3); `voice/*.wav`, synthetic caller answers; `index.html`, a page for saving them to a phone. The owner also has copies in `~/Downloads/on-time-test-samples`.
+- `lib/demo/`: the same pack photos, shrunk, for the demo families.
+- `dist/_test/` (gitignored, local only): real openly licensed prescriptions and packs from Wikimedia, plus Telugu answer clips (sare, hmm, avunu, aagandi, chaalu, tinnanu, vesukunnanu).
+- **The owner's father's real prescription is deliberately NOT in the repository** (it has a real name, phone number and address). Never add it. Never show it in the demo.
+
+### Dev scripts (`scripts/dev/`, read the key from `OPENAI_API_KEY` in the environment)
+- `live-prescriptions.mjs [label=image.jpg …]`: reads prescriptions through the live API and prints each line, whether it's flagged, what it contains, and the time.
+- `compare-models.mjs`: runs `extractPrescription` with `VISION_MODEL`, `VISION_EFFORT` and `VISION_READS` from the environment.
+- `replay-not-yet.mjs`: text replay of a call against the live agent. It doesn't mirror the app's structured `ask_dose` flow, so prefer `scripts/live-call-test.js` in the browser.
+- `make-voice-clips.mjs`: records synthetic caller answers in the app's voice through a live call session.
+- `generate-samples.mjs`: makes the sample prescription and pack photos with `gpt-image-2` (fictional clinic, "Demo Pharma", "for testing only").
+- `lang/`: how `dist/languages.mjs` was made. `generate.mjs` uses `gpt-5.2` (high) from `source.mjs`, then `build.mjs` applies the fixes and writes the file. **`dist/languages.mjs` is now the source of truth:** lines were added by hand after the last build (the `takeNow` line in 9 languages, ನಮಸ್ಕಾರ/നമസ്കാരം/নমস্কার greetings), and re-running `build.mjs` would drop them. `calls.mjs` runs a text call in each language.
+- `voices/`: how the voice `marin` was chosen (all 10 voices scored for Telugu naturalness and clarity).
+
+### Measured results worth quoting in the pitch
+- Turn-taking with real audio: a standard bot stopped on 3 of 3 listening sounds (సరే, హ్మ్, అవును); On Time on 0 of 3, and still yields on "ఆగండి".
+- Prescription models on a real handwritten Indian prescription: `gpt-5.2` called Met XL 50 (a BP tablet) a "Sugar tablet". `gpt-5.6-sol` got it right. `gpt-5.5` at high effort was also right but took 149 s. Five readings plus matching against 240,000 real medicines means no wrong simple names: what it can't read, it flags.
+- Pack scanning: 7 of 7 sample packs matched with correct counts, and 6 of 6 on real Wikimedia photos.
+- One-line pitch: **"It refuses to guess about medicine"** and **"Avunu ≠ Aagandi"**.
+
+### Known limitations (be honest if asked)
+- No login: a family is reached by an unguessable link. A real launch would add phone-number OTP.
+- iPhone: a web app can't ring like a real phone call. The alert is a notification, the silent switch mutes it, and the volume follows the media volume.
+- Very messy handwriting flags many lines for review. That's by design.
+- API Gateway's 30 s limit: prescription reading stops waiting at 26 s.
+
+### Owner's working style (from earlier sessions)
+- Direct and blunt. Fix bugs straight away, keep updates short, no long explanations.
+- "Done" means tested end to end on the live site. Say plainly what wasn't tested.
+- Don't chain extra fixes or sleep for minutes inside commands: fix what was asked, push, report, and *ask* about anything else you found.
+- Another agent (Codex) works on the same repository in parallel. **`git pull` before editing**, read files fresh, and don't overwrite its work.
+- No keyword or regex hacks for understanding language: ground the model in real data instead.
+
+### Ideas not built yet
+- Let scanned pack photos resolve flagged prescription lines (a printed label is easier to read than handwriting).
+- A hint on the empty pack-photo box pointing to "scan all packs at once".
