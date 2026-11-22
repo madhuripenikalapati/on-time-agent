@@ -5,15 +5,15 @@ import { voteReadings, expandPatterns } from '../lib/openai.mjs';
 const row = (name, strength, meal, nickname, use = null) => ({ name, strength, amount: '1 tablet', nickname, use, duration_days: '30', meal, timing: null, time: null, days: 'daily', source: name });
 const read = (...medicines) => ({ medicines: medicines.flat(), notes: '' });
 
-test('the majority wins a look-alike name and its simple name', () => {
+test('the leading look-alike stays in the draft but conflicting names require review', () => {
   const a = read([row('Arkamin', '0.1 mg', 'breakfast', 'BP tablet'), row('Arkamin', '0.1 mg', 'dinner', 'BP tablet')], row('Glimy M1', null, 'breakfast', 'Sugar tablet'));
   const b = read([row('Azamun', '25 mg', 'breakfast', null), row('Azamun', '25 mg', 'dinner', null)], row('Cilny M', null, 'breakfast', 'BP tablet'));
   const c = read([row('Arkamin', '0.1 mg', 'breakfast', 'BP tablet'), row('Arkamin', '0.1 mg', 'dinner', 'BP tablet')], row('Glimy M1', null, 'breakfast', 'Sugar tablet'));
   const out = voteReadings([a, b, c, c, a]);
   assert.deepEqual(out.medicines.map(m => [m.name, m.strength, m.meal, m.nickname]), [
-    ['Arkamin', '0.1 mg', 'breakfast', 'BP tablet'], ['Arkamin', '0.1 mg', 'dinner', 'BP tablet'], ['Glimy M1', null, 'breakfast', 'Sugar tablet'],
+    ['Arkamin', '0.1 mg', 'breakfast', null], ['Arkamin', '0.1 mg', 'dinner', null], ['Glimy M1', null, 'breakfast', null],
   ]);
-  assert.equal(out.notes, '');
+  assert.match(out.medicines[2].doubt, /Glimy M1.*Cilny M/);
 });
 
 test('no majority: the line is flagged and its simple name left blank', () => {
@@ -64,4 +64,18 @@ test('a plausible misreading that wins only 3 of 5 is flagged, not trusted', () 
 test('"Vitamin D₃" and "Vitamin D3" are the same reading', () => {
   const out = voteReadings([read(row('Vitamin D₃', '60000 IU', null, 'Vitamin D tablet')), read(row('Vitamin D3', '60000 IU', null, 'Vitamin D tablet')), read(row('Vitamin D3', '60000 IU', null, 'Vitamin D tablet'))]);
   assert.equal(out.medicines[0].doubt, null);
+});
+
+test('even a four-to-one Cilny reading leaves Glimy visible for manual review', () => {
+  const cilny = read(row('Cilny M', null, 'breakfast', 'BP tablet'));
+  const glimy = read(row('Glimy M1', null, 'breakfast', 'Sugar tablet'));
+  const [draft] = voteReadings([cilny, cilny, cilny, cilny, glimy]).medicines;
+  assert.match(draft.doubt, /Cilny M.*Glimy M1/);
+  assert.equal(draft.nickname, null);
+});
+
+test('one comparable reading is flagged even if the model reported no doubts', () => {
+  const [draft] = voteReadings([read(row('Cilny M', null, 'breakfast', 'BP tablet'))]).medicines;
+  assert.match(draft.doubt, /Only one comparable reading/);
+  assert.equal(draft.nickname, null);
 });
