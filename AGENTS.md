@@ -39,7 +39,7 @@ Read this first, then `README.md` (product, models, journey). This file covers h
 ```sh
 echo "OPENAI_API_KEY=sk-..." > .env   # gitignored. Never commit, print or log it.
 node server.mjs                      # http://localhost:8091 (PORT to change). Data in .data/ (gitignored)
-node --test test/*.test.mjs          # 63 tests, all must pass (the deploy runs them too)
+node --test test/*.test.mjs          # 91 tests, all must pass (the deploy runs them too)
 ```
 
 - **Share links use the page's own address.** On localhost they show localhost, which a phone can't open. For phone testing, always use the live site.
@@ -90,25 +90,45 @@ node --test test/*.test.mjs          # 63 tests, all must pass (the deploy runs 
 9. **The patient's phone screen** stays simple: the turn-taking chips appear only on the family dashboard. The pack card is cached and captions update in place, because a full re-render made the photo flicker.
 10. **Wording** is about any loved one ("Medicines for the people you love"), not only parents or "Amma".
 
-## Status (21 Nov 2026, night)
+## Status (22 Nov 2026, late morning: demo very soon)
 
-**Done and verified on the live site:**
-- calls in all 9 languages;
-- real-audio turn-taking: Standard bot stopped on 3 of 3 listening sounds, On Time on 0 of 3, and On Time yields on "ఆగండి";
-- prescription reading:
-  - the sample: 7 of 7 correct in about 12 s;
-  - a real messy handwritten prescription: no wrong simple names, with hard lines flagged;
-- pack scanning on the 7 samples: all matched with correct counts;
-- courses, weekly doses, onboarding, scheduler rings, missed calls, alerts, the Share card, iPhone layout fixes, automatic deploys.
+### Demo setup (use this for the demo)
+- **Three fixed demo families**, each locked to one language, pre-filled with the sample prescription (9 rows: Metformin morning and night, Amlodipine, Atorvastatin night, Thyroxine and Pantoprazole before breakfast, Amoxicillin morning and night for 5 days, Vitamin D3 on Sundays), pack photos and tablet counts:
+  - Telugu: `/?h=demo-telugu` (Lakshmi, greeted అమ్మ), phone `/?h=demo-telugu&view=phone`
+  - Hindi: `/?h=demo-hindi` (Kamla, greeted माँजी), phone `/?h=demo-hindi&view=phone`
+  - English: `/?h=demo-english` (Lakshmi, greeted Amma), phone `/?h=demo-english&view=phone`
+- The landing page has **Language demos** with Open, Stage view and **Reset** for each. `POST /api/demo/<telugu|hindi|english>` with `{"reset":true}` rebuilds the family: today's doses, calls and alerts are cleared, and the links and the phone's call alerts are kept. **Reset each demo before presenting**, otherwise doses taken in rehearsal mean there's nothing left to ask.
+- Code: `DEMOS` and `buildDemo` in `lib/api.mjs`. Small pack photos are in `lib/demo/` (under the 160 KB photo limit).
+- To start a call: dashboard **Call now**, or `POST /api/h/<id>/ring {"slot":"morning"}`. An unanswered ring becomes a missed call after 3 minutes.
 
-**Not yet verified, and the biggest risk:** a real iPhone with a real voice. That means install to the Home Screen, notifications, microphone and speaker, and a whole call. The owner is testing this now.
+### Latest call behaviour (owner's explicit request)
+- **Nothing is said before a dose is saved.** The reply to a dose question uses `tool_choice: 'required'` (`callerTurn` in `dist/realtime.mjs`): the agent may only call `record_dose`, `wait_for_patient`, `ask_dose`, `flag_for_family`, `show_pack` or `reply_out_loud`. The last one is new (in `lib/agent.mjs`) and covers questions and chat.
+- **After a saved "taken", only the short yes line is said:** Telugu plays the recorded `dist/confirm-te.wav` ("మంచిది అండి"), and the agent is told not to thank or acknowledge again. Hindi and English say exactly their phrasebook yes line ("अच्छा." / "Good."). This is in the `record_dose` output note in `runTools`.
+- **A two-breath answer counts once.** "అవును… వేసుకున్నాను" is transcribed as two utterances. A short reply (3 words or fewer, no question, stop word or correction) within 6 s of a save, with no question open, is kept as part of the same answer and gets no response (`savedAt` in `dist/realtime.mjs`). Before this fix, the agent improvised "one moment, it's still saving" and asked a medicine twice.
+- "Not yet": the agent says "can you take it now? I'll stay on the line", calls `wait_for_patient`, and waits up to 2 minutes. If the tablets have run out, the family gets a refill alert and no callback.
+- The other session (Codex) added the structured dose flow (`ask_dose`, app-spoken questions, 8 s repeat, `interpret_pack_reply`, greeting played first). Don't undo it.
 
-**Left to do:**
-1. Fix whatever the iPhone test finds.
-2. Slides: problem → Avunu ≠ Aagandi before/after (3 of 3 vs 0 of 3) → how it works → "it refuses to guess about medicine".
-3. A 2–3 minute demo script, and a backup screen recording of a full call.
-4. **Use the sample prescription in the demo, never a real one.**
-5. After the hackathon: delete the IAM user `on-time-deploy`, rotate the OpenAI key and `PILOT_PASSWORD` (they were shared during the build), and expect the AWS account to be closed.
+### Live call test (no microphone needed)
+- `scripts/live-call-test.js`: paste it into the browser console on `/?h=demo-<lang>&view=phone&debug=1` while the phone rings. It answers the call, then plays synthetic caller answers from `/samples/voice/<te|hi|en>-<ate|took>.wav`: "ate" to the meal question and "took" to each dose question. Progress is in `window.__run`. Afterwards, read the transcript with `GET /api/h/demo-<lang>` → `calls.at(-1).transcript`.
+- **Last result, Telugu, before the two-breath fix:** greeting → breakfast question → every medicine asked by its simple name → "మంచిది అండి." after each save, no "thanks for confirming", 6 morning doses saved, correct goodbye. Two issues, both from the two-breath answer: "still saving" improvisation, and Thyroid and Vitamin D asked twice. Fixed in 75895a5 and deployed, but **not yet re-tested. Re-run Telugu, then Hindi and English.**
+
+### Prescription reading (done)
+- `gpt-5.6-sol`, low effort, 5 readings in parallel. The vote happens at 21 s, with a hard stop at 26 s (API Gateway's limit is 30 s).
+- Each reading is matched to 240,000 real Indian medicines (`lib/medicines.mjs`, data in `lib/data/medicines.tsv.gz`, MIT; rebuild with `scripts/build-medicines.mjs`). Readings are compared by what they contain, not by spelling. A different real medicine or strength still flags (even 4 to 1). Three or more readings that agree on a real medicine win over a smudged reading that matches nothing. A line no reading could name is always flagged. The editor shows "Contains …".
+- The sample reads 7 of 7 with 0 flags in about 13 s. A real messy handwritten page flags 4–5 of 8 lines, with no wrong simple names.
+
+### Other recent features
+- Days: any weekday set (`"mon,wed,fri"`), `daily`, or `alt` (every other day from `startDate`), using weekday chips in the editor (`dist/schedule.mjs`).
+- Replace / Add when reading a new prescription; **Remove all medicines**; each day's dose counts once against the tablet count, and a corrected dose puts the tablet back.
+- iPhone: each family gets its own install manifest (`/api/h/<id>/manifest-phone`), so the Home Screen icon opens that family's call screen. The phone re-registers call alerts every time it opens. The ringtone is louder.
+
+### Uncommitted
+- `dist/family.mjs`: a one-line onboarding hint edit from the Codex session. It's theirs; leave it unless asked.
+
+### Left to do
+1. Re-run the live call test in Telugu, Hindi and English (above), and fix anything it shows.
+2. The owner tests on their iPhone: install `demo-telugu&view=phone` from Safari to the Home Screen, turn on call alerts, then **Call now**.
+3. After the hackathon: delete the IAM user `on-time-deploy` and rotate the OpenAI key and `PILOT_PASSWORD`.
 
 ## Working style the owner expects
 
